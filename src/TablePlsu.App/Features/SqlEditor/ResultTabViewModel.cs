@@ -109,11 +109,14 @@ public sealed partial class ResultTabViewModel : ObservableObject
     }
 
     /// <summary>Appends a streamed batch.</summary>
-    public void AddBatch(ResultBatch batch)
+    public void AddBatch(ResultBatch batch) => AddRows(batch.Columns, batch.Rows);
+
+    /// <summary>Appends streamed rows (one or more coalesced batches of the statement) with one collection update.</summary>
+    public void AddRows(IReadOnlyList<ResultColumn> columns, IReadOnlyList<object?[]> rows)
     {
-        if (Columns is null && batch.Columns.Count > 0) Columns = batch.Columns;
-        if (batch.Columns.Count > 0) HasResultSet = true;
-        if (batch.Rows.Count > 0) Rows.AddRange(batch.Rows);
+        if (Columns is null && columns.Count > 0) Columns = columns;
+        if (columns.Count > 0) HasResultSet = true;
+        if (rows.Count > 0) Rows.AddRange(rows);
         RowCount = Rows.Count;
     }
 
