@@ -1,0 +1,73 @@
+<UserControl x:Class="TablePlsu.App.Features.Settings.KeymapReferenceView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             AutomationProperties.AutomationId="KeymapReference"
+             Background="{DynamicResource c.app.window}" Foreground="{DynamicResource c.app.windowForeground}">
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+        <Style x:Key="Cell" TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Setter Property="Margin" Value="0,0,12,0" />
+        </Style>
+    </UserControl.Resources>
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Background="{DynamicResource c.app.toolbar}" BorderBrush="{DynamicResource c.app.border}" BorderThickness="0,0,0,1" Padding="8,5">
+            <DockPanel>
+                <Button DockPanel.Dock="Right" Content="Edit keymap in settings.json" Command="{Binding EditKeymapCommand}" Style="{DynamicResource AccentButton}" Padding="10,3" />
+                <TextBox x:Name="Filter" Text="{Binding FilterText, UpdateSourceTrigger=PropertyChanged}" Width="280" HorizontalAlignment="Left"
+                         AutomationProperties.Name="Filter commands" ToolTip="Filter by id, title, scope or binding" />
+            </DockPanel>
+        </Border>
+        <ItemsControl DockPanel.Dock="Top" ItemsSource="{Binding Warnings}" Visibility="{Binding HasWarnings, Converter={StaticResource BoolToVis}}" Margin="10,6,10,0">
+            <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                    <TextBlock Text="{Binding}" Foreground="{DynamicResource c.app.warning}" TextWrapping="Wrap" />
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
+        <Grid DockPanel.Dock="Top" Margin="14,8,14,4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="230" />
+                <ColumnDefinition Width="220" />
+                <ColumnDefinition Width="90" />
+                <ColumnDefinition Width="200" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="COMMAND ID" Style="{DynamicResource SectionHeader}" />
+            <TextBlock Grid.Column="1" Text="TITLE" Style="{DynamicResource SectionHeader}" />
+            <TextBlock Grid.Column="2" Text="SCOPE" Style="{DynamicResource SectionHeader}" />
+            <TextBlock Grid.Column="3" Text="BINDING" Style="{DynamicResource SectionHeader}" />
+            <TextBlock Grid.Column="4" Text="DEFAULT" Style="{DynamicResource SectionHeader}" />
+        </Grid>
+        <ListBox x:Name="List" ItemsSource="{Binding Rows}" BorderThickness="0" Background="Transparent" Foreground="{DynamicResource c.app.windowForeground}"
+                 VirtualizingPanel.IsVirtualizing="True" AutomationProperties.AutomationId="KeymapRows" MouseDoubleClick="OnRowDoubleClick">
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <Grid Margin="4,2" ToolTip="Double-click to copy a keymap entry for this command">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="230" />
+                            <ColumnDefinition Width="220" />
+                            <ColumnDefinition Width="90" />
+                            <ColumnDefinition Width="200" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="{Binding Id}" Style="{StaticResource Cell}" FontFamily="{DynamicResource MonoFont}" />
+                        <TextBlock Grid.Column="1" Text="{Binding Title}" Style="{StaticResource Cell}" />
+                        <TextBlock Grid.Column="2" Text="{Binding Scope}" Style="{StaticResource Cell}" Foreground="{DynamicResource c.app.mutedForeground}" />
+                        <TextBlock x:Name="Binding" Grid.Column="3" Text="{Binding Bindings}" Style="{StaticResource Cell}" FontWeight="SemiBold" />
+                        <TextBlock Grid.Column="4" Text="{Binding Defaults}" Style="{StaticResource Cell}" Foreground="{DynamicResource c.app.mutedForeground}" />
+                    </Grid>
+                    <DataTemplate.Triggers>
+                        <DataTrigger Binding="{Binding IsCustomized}" Value="True">
+                            <Setter TargetName="Binding" Property="Foreground" Value="{DynamicResource c.app.accent}" />
+                        </DataTrigger>
+                        <DataTrigger Binding="{Binding IsUnbound}" Value="True">
+                            <Setter TargetName="Binding" Property="Foreground" Value="{DynamicResource c.app.mutedForeground}" />
+                        </DataTrigger>
+                    </DataTemplate.Triggers>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+    </DockPanel>
+</UserControl>

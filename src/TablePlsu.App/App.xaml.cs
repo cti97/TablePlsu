@@ -18,9 +18,13 @@ public partial class App : Application
     private bool _measureStartup;
     private readonly List<(string Step, double Ms)> _marks = [];
 
+    private DateTime _processStart;
+
     private void Mark(string step)
     {
-        if (_measureStartup) _marks.Add((step, (DateTime.Now - Process.GetCurrentProcess().StartTime).TotalMilliseconds));
+        if (!_measureStartup) return;
+        if (_processStart == default) _processStart = Process.GetCurrentProcess().StartTime;
+        _marks.Add((step, (DateTime.Now - _processStart).TotalMilliseconds));
     }
 
     public App()
@@ -102,7 +106,17 @@ public partial class App : Application
         var ms = (DateTime.Now - started).TotalMilliseconds;
         var npgsqlLoaded = AppDomain.CurrentDomain.GetAssemblies().Any(a => a.GetName().Name == "Npgsql");
         var steps = string.Join(", ", marks.Select(m => $"{m.Step} {m.Ms:F0}"));
-        var line = $"startup: {ms:F0} ms to first ContentRendered (npgsql loaded: {(npgsqlLoaded ? "yes" : "no")}; {steps})";
+        // JIT work is a load-independent signal (wall-clock timings swing with machine load): methods compiled at run time
+        // and the time spent compiling them, plus assemblies loaded.
+        var jitted = System.Runtime.JitInfo.GetCompiledMethodCount();
+        var jitMs = System.Runtime.JitInfo.GetCompilationTime().TotalMilliseconds;
+        var assemblies = AppDomain.CurrentDomain.GetAssemblies().Length;
+        // CPU time is far less sensitive to machine load than wall-clock: UI thread (the critical path) and whole process.
+        var uiCpu = GetThreadTimes(GetCurrentThread(), out _, out _, out var kernel, out var user)
+            ? (kernel + user) / 10_000.0
+            : double.NaN;
+        var cpu = Process.GetCurrentProcess().TotalProcessorTime.TotalMilliseconds;
+        var line = $"startup: {ms:F0} ms to first ContentRendered (npgsql loaded: {(npgsqlLoaded ? "yes" : "no")}; jit {jitted} methods {jitMs:F0} ms; assemblies {assemblies}; cpu ui {uiCpu:F0} ms process {cpu:F0} ms; {steps})";
 
         AttachConsole(-1);
         try
@@ -146,4 +160,10 @@ public partial class App : Application
 
     [DllImport("kernel32.dll")]
     private static extern bool AttachConsole(int processId);
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr GetCurrentThread();
+
+    [DllImport("kernel32.dll")]
+    private static extern bool GetThreadTimes(IntPtr thread, out long creation, out long exit, out long kernel, out long user);
 }

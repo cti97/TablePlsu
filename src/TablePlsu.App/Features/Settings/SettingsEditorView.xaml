@@ -1,0 +1,98 @@
+<UserControl x:Class="TablePlsu.App.Features.Settings.SettingsEditorView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ae="http://icsharpcode.net/sharpdevelop/avalonedit"
+             xmlns:local="clr-namespace:TablePlsu.App.Features.Settings"
+             AutomationProperties.AutomationId="SettingsEditor"
+             Background="{DynamicResource c.app.window}">
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+    </UserControl.Resources>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" MinHeight="80" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition x:Name="ProblemsRow" Height="140" MinHeight="28" />
+        </Grid.RowDefinitions>
+
+        <!-- Command bar -->
+        <Border Grid.Row="0" Background="{DynamicResource c.app.toolbar}" BorderBrush="{DynamicResource c.app.border}" BorderThickness="0,0,0,1" Padding="8,5">
+            <DockPanel LastChildFill="True">
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
+                    <Button x:Name="SaveButton" Content="Save" Command="{Binding SaveFileCommand}" Style="{DynamicResource AccentButton}" Padding="12,3"
+                            AutomationProperties.AutomationId="SettingsSave" ToolTip="Save and apply (Ctrl+S)" Margin="0,0,6,0" />
+                    <Button Content="Revert" Command="{Binding RevertCommand}" Style="{DynamicResource FlatButton}" Padding="8,3" Margin="0,0,12,0"
+                            ToolTip="Discard local edits and reload settings.json from disk" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+                    <Button Content="Open defaults" Command="{Binding OpenDefaultsCommand}" Style="{DynamicResource FlatButton}" Padding="8,3"
+                            AutomationProperties.AutomationId="SettingsOpenDefaults" ToolTip="Show the read-only default settings" />
+                    <Button Content="Keymap" Command="{Binding OpenKeymapReferenceCommand}" Style="{DynamicResource FlatButton}" Padding="8,3"
+                            ToolTip="Show every command id with its current binding" />
+                    <Button Content="Themes folder" Command="{Binding OpenThemesFolderCommand}" Style="{DynamicResource FlatButton}" Padding="8,3"
+                            ToolTip="Open the folder for custom theme files" />
+                </StackPanel>
+                <TextBlock Text="{Binding StatusText}" Style="{DynamicResource MutedText}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                           AutomationProperties.AutomationId="SettingsStatus" />
+            </DockPanel>
+        </Border>
+
+        <!-- Error banner: the file could not be applied; last good settings are active. -->
+        <Border Grid.Row="1" x:Name="Banner" Visibility="{Binding HasBanner, Converter={StaticResource BoolToVis}}"
+                Background="{DynamicResource c.app.error}" Padding="10,6" AutomationProperties.AutomationId="SettingsBanner">
+            <TextBlock Text="{Binding Banner}" Foreground="{DynamicResource c.app.accentForeground}" TextWrapping="Wrap" />
+        </Border>
+
+        <ae:TextEditor Grid.Row="2" x:Name="Editor" ShowLineNumbers="True" WordWrap="False"
+                       FontFamily="{DynamicResource editor.fontFamily}" FontSize="{DynamicResource editor.fontSize}"
+                       Background="{DynamicResource c.editor.background}" Foreground="{DynamicResource c.editor.foreground}"
+                       LineNumbersForeground="{DynamicResource c.editor.lineNumbers}"
+                       HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" Padding="4,2,0,0"
+                       AutomationProperties.AutomationId="SettingsText" />
+
+        <GridSplitter Grid.Row="3" Height="4" HorizontalAlignment="Stretch" ResizeDirection="Rows" ResizeBehavior="PreviousAndNext"
+                      Background="{DynamicResource c.app.border}" x:Name="ProblemsSplitter" />
+
+        <!-- Problems panel -->
+        <DockPanel Grid.Row="4" x:Name="ProblemsPanel" Background="{DynamicResource c.app.sidebar}">
+            <Border DockPanel.Dock="Top" Padding="10,4" BorderBrush="{DynamicResource c.app.border}" BorderThickness="0,0,0,1">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="PROBLEMS" Style="{DynamicResource SectionHeader}" Margin="0,0,10,0" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding DiagnosticsSummary}" Style="{DynamicResource MutedText}" VerticalAlignment="Center"
+                               AutomationProperties.AutomationId="SettingsProblemsSummary" />
+                </StackPanel>
+            </Border>
+            <ListBox x:Name="ProblemList" ItemsSource="{Binding Diagnostics}" BorderThickness="0" Background="Transparent"
+                     Foreground="{DynamicResource c.app.sidebarForeground}"
+                     AutomationProperties.AutomationId="SettingsProblems"
+                     MouseLeftButtonUp="OnProblemClicked" KeyDown="OnProblemKeyDown">
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <Grid Margin="2,1" ToolTip="Click to jump to the line">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="20" />
+                                <ColumnDefinition Width="64" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock x:Name="Glyph" Style="{DynamicResource Icon}" Text="&#xE7BA;" Foreground="{DynamicResource c.app.warning}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" Style="{DynamicResource MutedText}" VerticalAlignment="Center">
+                                <Run Text="Ln" /><Run Text="{Binding Line, Mode=OneWay}" /><Run Text=":" /><Run Text="{Binding Column, Mode=OneWay}" />
+                            </TextBlock>
+                            <TextBlock Grid.Column="2" TextTrimming="CharacterEllipsis" VerticalAlignment="Center">
+                                <Run Text="{Binding Path, Mode=OneWay}" FontWeight="SemiBold" /><Run Text="  " /><Run Text="{Binding Message, Mode=OneWay}" />
+                            </TextBlock>
+                        </Grid>
+                        <DataTemplate.Triggers>
+                            <DataTrigger Binding="{Binding IsError}" Value="True">
+                                <Setter TargetName="Glyph" Property="Text" Value="&#xEA39;" />
+                                <Setter TargetName="Glyph" Property="Foreground" Value="{DynamicResource c.app.error}" />
+                            </DataTrigger>
+                        </DataTemplate.Triggers>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </DockPanel>
+    </Grid>
+</UserControl>
