@@ -20,7 +20,7 @@ param(
     [int]$Runs = 5,
     [int]$Rounds = 3
 )
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Continue'  # dotnet writes warnings to stderr
 $root = Split-Path $PSScriptRoot -Parent
 if (-not $env:TABLEPLSU_TEST_PG) { $env:TABLEPLSU_TEST_PG = 'Host=localhost;Port=54329;Username=postgres;Database=tableplsu_test' }
 $env:TABLEPLSU_PERF_SCHEMA = 'perf_sbsearch_' + [guid]::NewGuid().ToString('N').Substring(0, 6)
@@ -45,7 +45,8 @@ for ($i = 0; $i -lt $Runs; $i++) {
         $file = [IO.Path]::GetTempFileName()
         $env:TABLEPLSU_PERF_OUT = $file
         Write-Host "run $n/$total $($t.Name)"
-        dotnet test $t.Dll --filter 'FullyQualifiedName~SidebarSearchPerfTests' -nologo | Out-Null
+        dotnet test $t.Dll --filter 'FullyQualifiedName~SidebarSearchPerfTests' -nologo 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { Write-Warning "$($t.Name) run $n failed (exit $LASTEXITCODE)" }
         foreach ($line in Get-Content $file) {
             if ($line -notmatch '^PERF sidebarsearch (\S+) (.*)$') { continue }
             $case = $Matches[1]
