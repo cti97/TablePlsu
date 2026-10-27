@@ -179,8 +179,23 @@ public static class CompletionEngine
     // ───────────────────────── ranking ─────────────────────────
 
     /// <summary>A candidate with its ranking keys.</summary>
-    /// <remarks><see cref="Item"/> is null for a table whose item is built only if it makes the cut (<see cref="Table"/>).</remarks>
-    private readonly record struct Scored(CompletionItem? Item, int Class, int KindOrder, bool Exact, int SubOrder, int Fuzzy, string MatchName, TableInfo? Table = null, bool Qualify = false);
+    /// <remarks><see cref="Item"/> is null for a table or function whose item is built only if it makes the cut
+    /// (<see cref="Source"/>: a <see cref="TableInfo"/>, a <see cref="FunctionInfo"/> of its own schema, or a
+    /// <see cref="FnRef"/>): most candidates never do. Kept small: big catalogs put thousands of these in a list.</remarks>
+    private readonly record struct Scored(CompletionItem? Item, int Class, int KindOrder, bool Exact, int SubOrder, int Fuzzy, string MatchName, object? Source = null, bool Qualify = false);
+
+    /// <summary>A function listed under a schema other than its own <see cref="FunctionInfo.Schema"/> (rare).</summary>
+    private sealed record FnRef(FunctionInfo Function, string Schema);
+
+    private static bool AsFunction(object? source, out FunctionInfo f, out string schema)
+    {
+        switch (source)
+        {
+            case FunctionInfo fi: f = fi; schema = fi.Schema; return true;
+            case FnRef r: f = r.Function; schema = r.Schema; return true;
+            default: f = null!; schema = null!; return false;
+        }
+    }
 
     private const int FuzzyPending = int.MinValue;
 
@@ -226,7 +241,7 @@ public static class CompletionEngine
             c = string.Compare(a.MatchName, b.MatchName, StringComparison.OrdinalIgnoreCase);
             if (c != 0) return c;
             c = string.CompareOrdinal(a.MatchName, b.MatchName);
-            return c != 0 ? c : string.CompareOrdinal(a.Item?.Detail ?? a.Table?.Schema, b.Item?.Detail ?? b.Table?.Schema);
+            return c != 0 ? c : CompareTie(a, b);
         };
         var n = Math.Min(max <= 0 ? list.Count : max, list.Count);
         if (list.Count > n * 2)
@@ -243,9 +258,40 @@ public static class CompletionEngine
         }
         list.Sort(compare);
         var result = new CompletionItem[n];
-        for (var i = 0; i < n; i++) result[i] = list[i].Item ?? ctx.TableItem(list[i].Table!, list[i].Qualify);
+        for (var i = 0; i < n; i++)
+        {
+            var x = list[i];
+            result[i] = x.Item ?? (x.Source is TableInfo t ? ctx.TableItem(t, x.Qualify) : AsFunction(x.Source, out var f, out var fs) ? ctx.FunctionItem(f, fs, x.Qualify) : throw new InvalidOperationException("candidate without item"));
+        }
         return result;
     }
+
+    /// <summary>
+    /// The last tie-breaker: ordinal order of the items' details. Two deferred functions (the same name in several
+    /// schemas) compare their would-be details in stack buffers, so ranking big catalogs allocates no strings.
+    /// </summary>
+    private static int CompareTie(in Scored a, in Scored b)
+    {
+        // Common cases first: tables (same name in several schemas) and built items.
+        if (a.Source is TableInfo ta && b.Source is TableInfo tb) return string.CompareOrdinal(ta.Schema, tb.Schema);
+        if (a.Item is { } ia && b.Item is { } ib) return string.CompareOrdinal(ia.Detail, ib.Detail);
+        if (AsFunction(a.Source, out var fa, out var sa) && AsFunction(b.Source, out var fb, out var sb) && CompareFunctionDetails(fa, sa, fb, sb) is { } c)
+            return c;
+        return string.CompareOrdinal(TieKey(a), TieKey(b));
+    }
+
+    private static int? CompareFunctionDetails(FunctionInfo fa, string sa, FunctionInfo fb, string sb)
+    {
+        // Same return type (the usual case: one function in several schemas): the details differ only in the schema.
+        if (string.Equals(fa.ReturnType, fb.ReturnType, StringComparison.Ordinal)) return string.CompareOrdinal(sa, sb);
+        Span<char> bufA = stackalloc char[256];
+        Span<char> bufB = stackalloc char[256];
+        if (!Ctx.TryWriteFunctionDetail(fa, sa, bufA, out var na) || !Ctx.TryWriteFunctionDetail(fb, sb, bufB, out var nb)) return null;
+        return bufA[..na].SequenceCompareTo(bufB[..nb]);
+    }
+
+    private static string? TieKey(in Scored x) =>
+        x.Item?.Detail ?? (x.Source as TableInfo)?.Schema ?? (AsFunction(x.Source, out var f, out var s) ? Ctx.FunctionDetail(f, s) : null);
 
     /// <summary>Per-request state: metadata, options, the typed prefix and the statement analysis.</summary>
     private sealed class Ctx(DbMetadata md, CompletionOptions o, string prefix, bool quoted, int caret, StatementAnalyzer an)
@@ -350,6 +396,32 @@ public static class CompletionEngine
             }
         }
 
+        public CompletionItem FunctionItem(FunctionInfo f, string schema, bool qualify)
+        {
+            var insert = (qualify ? Ident(schema) + "." : "") + Ident(f.Name) + "()";
+            return new CompletionItem(CompletionKind.Function, f.Name + "(" + f.Arguments + ")", insert, FunctionDetail(f, schema))
+            { CaretBack = f.Arguments.Length > 0 ? 1 : 0, Schema = schema };
+        }
+
+        public static string FunctionDetail(FunctionInfo f, string schema) => (f.ReturnType is null ? "procedure" : "→ " + f.ReturnType) + " · " + schema;
+
+        /// <summary><see cref="FunctionDetail"/> written into <paramref name="dst"/>; false when it does not fit.</summary>
+        public static bool TryWriteFunctionDetail(FunctionInfo f, string schema, Span<char> dst, out int length)
+        {
+            length = 0;
+            ReadOnlySpan<char> head = f.ReturnType is null ? "procedure" : "→ ";
+            ReadOnlySpan<char> ret = f.ReturnType;
+            ReadOnlySpan<char> sep = " · ";
+            var n = head.Length + ret.Length + sep.Length + schema.Length;
+            if (n > dst.Length) return false;
+            head.CopyTo(dst);
+            ret.CopyTo(dst[head.Length..]);
+            sep.CopyTo(dst[(head.Length + ret.Length)..]);
+            schema.AsSpan().CopyTo(dst[(head.Length + ret.Length + sep.Length)..]);
+            length = n;
+            return true;
+        }
+
         public CompletionItem TableItem(TableInfo t, bool qualify)
         {
             var insert = (qualify ? Ident(t.Schema) + "." : "") + Ident(t.Name) + Space;
@@ -398,11 +470,8 @@ public static class CompletionEngine
                     names.Add(f.Name);
                     if (!Matches(f.Name)) continue;
                     var qualify = only is null && sub == 1 && o.PrefixSchema && s.Name != "public";
-                    var insert = (qualify ? Ident(s.Name) + "." : "") + Ident(f.Name) + "()";
-                    var detail = (f.ReturnType is null ? "procedure" : "→ " + f.ReturnType) + " · " + s.Name;
-                    var item = new CompletionItem(CompletionKind.Function, f.Name + "(" + f.Arguments + ")", insert, detail)
-                    { CaretBack = f.Arguments.Length > 0 ? 1 : 0, Schema = s.Name };
-                    AddMatched(list, item, f.Name, order, sub);
+                    var exact = prefix.Length > 0 && f.Name.Length == prefix.Length;
+                    list.Add(new Scored(null, _cls, order, exact, sub, _fz, f.Name, f.Schema == s.Name ? f : new FnRef(f, s.Name), qualify));
                 }
             }
             if (only is not null) return;

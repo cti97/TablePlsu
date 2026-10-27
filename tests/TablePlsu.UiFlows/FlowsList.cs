@@ -201,7 +201,8 @@ public sealed partial class Flows
 
     static string Norm(string s) => s.Replace("\r\n", "\n").TrimEnd();
 
-    AutomationElement? CompletionPopup() => OtherWindow(w => First(w, Id("PART_ListBox")) != null);
+    // The autocomplete list lives in the main window's adorner layer (no window of its own).
+    AutomationElement? CompletionPopup() => FirstVisible(Main, Id("CompletionList"));
 
     void CloseCompletion()
     {

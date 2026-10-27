@@ -95,11 +95,9 @@ try {
     Start-Sleep -Milliseconds 300
     [System.Windows.Forms.SendKeys]::SendWait("select {*} from sales.orders")
     Start-Sleep -Milliseconds 500
-    # Close the autocomplete popup if it is open (it is a separate top-level window of the process).
-    $popupCond = New-Object System.Windows.Automation.AndCondition(
-        (New-Object System.Windows.Automation.PropertyCondition($ae::ProcessIdProperty, $proc.Id)),
-        (New-Object System.Windows.Automation.NotCondition((Id "MainWindow"))))
-    if ($ae::RootElement.FindFirst($tree::Children, $popupCond)) { [System.Windows.Forms.SendKeys]::SendWait("{ESC}"); Start-Sleep -Milliseconds 200 }
+    # Close the autocomplete popup if it is open (a list in the main window's adorner layer, AutomationId CompletionList).
+    $popup = $window.FindFirst($tree::Descendants, (Id "CompletionList"))
+    if ($popup -and -not $popup.Current.IsOffscreen) { [System.Windows.Forms.SendKeys]::SendWait("{ESC}"); Start-Sleep -Milliseconds 200 }
     [System.Windows.Forms.SendKeys]::SendWait("^{ENTER}")
     $summary = Wait-For { $s = $window.FindFirst($tree::Descendants, (Id "ResultSummary")); if ($s -and $s.Current.Name -match '^[1-9][\d,.]* rows?') { $s } } 75
     if (-not $summary) {

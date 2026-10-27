@@ -498,13 +498,13 @@ public class CustomisationTests
             editor.CaretOffset = editor.Text.Length;
             editor.TextArea.Focus();
             completion.Open();
-            var popup = completion.Window!;
-            // Application.Resources stand-in: in the app the popup window resolves the same dictionary.
-            popup.Resources.MergedDictionaries.Add(window.Resources);
+            // The popup lives in the window's adorner layer, so it resolves the window's (the app's) theme resources.
+            var popup = completion.Popup!;
+            Assert.Same(window, Window.GetWindow(popup));
             DoEvents();
             var bar = Find<ScrollBar>(popup, b => b.Orientation == Orientation.Vertical && b.IsVisible);
             var rtb = new RenderTargetBitmap((int)popup.ActualWidth, (int)popup.ActualHeight, 96, 96, PixelFormats.Pbgra32);
-            var root = (FrameworkElement)VisualTreeHelper.GetChild(popup, 0);
+            var root = popup;
             rtb.Render(root);
             var p = bar.TranslatePoint(new Point(bar.ActualWidth / 2, bar.ActualHeight - 10), root);
             var px = new byte[4];

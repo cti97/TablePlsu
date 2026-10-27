@@ -156,7 +156,6 @@ public class ScalePerfTests(ITestOutputHelper output)
                         editor.TextArea.PerformTextInput(c.ToString());
                         completion.FlushPending();
                         editor.UpdateLayout();
-                        completion.Window?.UpdateLayout();
                         var t = sw.Elapsed.TotalMilliseconds;
                         if (!wasOpen && completion.IsOpen) popupOpenMs = t;
                         keyTimes.Add(t);
