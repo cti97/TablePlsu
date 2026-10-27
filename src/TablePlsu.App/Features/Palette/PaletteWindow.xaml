@@ -59,7 +59,7 @@
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Style="{StaticResource Icon}" FontSize="13" Text="{Binding Icon}" Foreground="{DynamicResource c.app.accent}" />
+                            <TextBlock Style="{DynamicResource Icon}" FontSize="13" Text="{Binding Icon}" Foreground="{DynamicResource c.app.accent}" />
                             <TextBlock Grid.Column="1" Text="{Binding Title}" Margin="4,0,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="330" />
                             <TextBlock Grid.Column="2" Text="{Binding Detail}" Margin="10,0,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
                                        FontSize="12" Foreground="{DynamicResource c.app.mutedForeground}" />

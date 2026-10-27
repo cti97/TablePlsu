@@ -104,7 +104,18 @@ public sealed partial class SidebarViewModel : ObservableObject, ICommandTarget,
     [ObservableProperty]
     public partial string SearchText { get; set; } = "";
 
-    partial void OnSearchTextChanged(string value) => Rebuild();
+    partial void OnSearchTextChanged(string value)
+    {
+        Rebuild();
+        // Lazy schemas: searching needs the contents of every visible schema, so load the ones not loaded yet.
+        if (value.Trim().Length > 0 && Workspace.State == DbSessionState.Connected)
+        {
+            var md = Workspace.Metadata.Current;
+            var visible = EffectiveVisible(md);
+            foreach (var s in md.Schemas)
+                if (!s.IsLoaded && (visible is null || visible.Contains(s.Name))) LoadSchema(s.Name);
+        }
+    }
 
     [ObservableProperty]
     public partial string HistorySearchText { get; set; } = "";

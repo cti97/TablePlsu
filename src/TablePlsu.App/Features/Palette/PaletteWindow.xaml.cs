@@ -27,6 +27,13 @@ public partial class PaletteWindow : Window
         vm.PropertyChanged += OnVmPropertyChanged;
         PreviewKeyDown += OnKeyDown;
         Deactivated += (_, _) => CloseQuietly();
+        Closing += (_, _) => _closing = true;
+        Closed += (_, _) =>
+        {
+            _closing = true;
+            if (Current == this) Current = null;
+            _vm.Dispose();
+        };
         Input.TextChanged += (_, _) => UpdateHint();
         Loaded += (_, _) =>
         {
@@ -166,6 +173,13 @@ public partial class PaletteWindow : Window
         var owner = Owner;
         _vm.Dispose();
         Close();
-        owner?.Activate();
+        try
+        {
+            if (owner is { IsLoaded: true, IsVisible: true }) owner.Activate();
+        }
+        catch (InvalidOperationException)
+        {
+            // The owner is closing too.
+        }
     }
 }
