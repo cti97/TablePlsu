@@ -44,6 +44,9 @@ public partial class App : Application
         Mark("OnStartup");
         UiDispatch.Initialize(Dispatcher);
         DispatcherUnhandledException += OnUnhandledException;
+        // Never lose editor text: crashes on any thread and Windows logoff/shutdown write every autosave store first.
+        AppDomain.CurrentDomain.UnhandledException += (_, _) => Features.SqlEditor.EditorSessionManager.FlushAll();
+        SessionEnding += (_, _) => Features.SqlEditor.EditorSessionManager.FlushAll();
 
         AppServices.Init();
         Mark("services");
@@ -139,6 +142,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        Features.SqlEditor.EditorSessionManager.FlushAll();
         AppServices.Shutdown();
         base.OnExit(e);
     }
@@ -146,6 +150,7 @@ public partial class App : Application
     private void OnUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
         Trace.WriteLine(e.Exception);
+        Features.SqlEditor.EditorSessionManager.FlushAll();
         try
         {
             Directory.CreateDirectory(AppServices.Paths.LogsDir);

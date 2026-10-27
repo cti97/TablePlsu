@@ -34,13 +34,65 @@ public sealed class EditorSessionManager : IDisposable
     {
         _ws = ws;
         // The tab view-models debounce keystrokes themselves (editor.autoSaveDebounceMs) and every write goes through the
-        // serial queue below, so the store's own timer is effectively off (its Flush does not wait for an in-flight write).
+        // serial queue below, so the store's own timer is effectively off.
         _store = new EditorSessionStore(paths, ws.Profile.Id, TimeSpan.FromHours(1), msg => ws.ConsoleLog.Add(msg, ConsoleEntryKind.Error));
         var stored = AppServices.IsInitialized ? AppServices.Connections.Get(ws.Profile.Id) : null;
         _rowLimit = stored?.RowLimit ?? ws.Profile.RowLimit ?? Settings.Editor.DefaultRowLimit;
 
         if (ws.Tabs is INotifyCollectionChanged tabs) tabs.CollectionChanged += OnTabsChanged;
         ws.Closing += OnWorkspaceClosing;
+        lock (Live) Live.Add(this);
+    }
+
+    private static readonly List<EditorSessionManager> Live = [];
+
+    /// <summary>
+    /// Writes every live workspace's editor text and session now, including text still inside the editor's keystroke
+    /// debounce. For crash and logoff paths (unhandled exception, Windows session ending): safe from any thread and never
+    /// throws. Off the UI thread it marshals to the UI thread (bounded wait), then writes whatever reached the stores.
+    /// </summary>
+    public static void FlushAll()
+    {
+        EditorSessionManager[] live;
+        lock (Live) live = [.. Live];
+        if (live.Length == 0) return;
+        var dispatcher = UiDispatch.Dispatcher;
+        if (dispatcher is not null && !dispatcher.CheckAccess())
+        {
+            try
+            {
+                if (!dispatcher.HasShutdownStarted)
+                    dispatcher.InvokeAsync(() => FlushAllOnUiThread(live), DispatcherPriority.Send).Task.Wait(TimeSpan.FromSeconds(2));
+            }
+            catch (Exception)
+            {
+                // The UI thread is unusable; the stores below still get whatever they hold.
+            }
+        }
+        else
+        {
+            FlushAllOnUiThread(live);
+        }
+        foreach (var m in live)
+        {
+            try { m._store.Flush(); } catch (Exception) { /* best effort */ }
+        }
+    }
+
+    private static void FlushAllOnUiThread(EditorSessionManager[] live)
+    {
+        foreach (var m in live)
+        {
+            try
+            {
+                foreach (var t in m._ws.Tabs.OfType<SqlEditorTabViewModel>()) t.PushText();
+                m.FlushNow();
+            }
+            catch (Exception)
+            {
+                // Keep going: one broken workspace must not stop the others from saving.
+            }
+        }
     }
 
     /// <summary>The manager of <paramref name="ws"/> (created on first use).</summary>
@@ -98,13 +150,13 @@ public sealed class EditorSessionManager : IDisposable
         var mode = Settings.Editor.AutoSaveTabs;
         if (mode == AutoSaveTabs.None) return [];
         IReadOnlyList<RestoredTab> restored;
-        try { restored = _store.LoadTabs(); }
+        // Tabs another window has open on this connection are skipped; with "first", the rest stay on disk.
+        try { restored = _store.LoadTabs(mode == AutoSaveTabs.First ? 1 : null); }
         catch (Exception ex)
         {
             _ws.ConsoleLog.Add("Could not restore editor tabs: " + ex.Message, ConsoleEntryKind.Error);
             return [];
         }
-        if (mode == AutoSaveTabs.First) restored = restored.Take(1).ToList();
         var activeId = _store.Load().ActiveTabId;
         var tabs = new List<SqlEditorTabViewModel>();
         foreach (var r in restored)
@@ -283,6 +335,7 @@ public sealed class EditorSessionManager : IDisposable
     public void Dispose()
     {
         if (_disposed) return;
+        lock (Live) Live.Remove(this);
         _closing = true;
         _sessionTimer?.Stop();
         if (_ws.Tabs is INotifyCollectionChanged tabs) tabs.CollectionChanged -= OnTabsChanged;

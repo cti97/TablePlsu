@@ -35,7 +35,7 @@ tests/TablePlsu.Tests  — xUnit, references Core
 | `Metadata/` | `DbMetadata` model (schemas → tables/views/matviews/functions/sequences/types, columns, PK, FKs, indexes), `MetadataLoader` (catalog queries), `MetadataCache` (JSON on disk per connection+db, memory, background refresh). |
 | `Completion/` | `CompletionEngine`: pure function `(text, caret, DbMetadata, options) → CompletionItem[]`, alias/CTE aware. |
 | `Data/` | `TableQueryBuilder` (SELECT with filters, sort, paging, parameterized), `FilterCondition` and operators, `PendingChanges` (staged cell edits, inserts, deletes, DDL ops, undo/redo), `ChangeSqlGenerator` (UPDATE/INSERT/DELETE by PK, parameter-safe literal rendering for preview), `DdlGenerator` (CREATE TABLE, column ops), `SafeModePolicy`. |
-| `Editors/` | `EditorSessionStore` (autosave: `editors\{connId}\{tabId}.sql` plus `session.json`, debounced, recently-closed list). |
+| `Editors/` | `EditorSessionStore` (autosave: `editors\{connId}\{tabId}.sql` plus `session.json`, debounced, recently-closed list). Writes are serialized (`Flush` waits for an in-flight write; failed writes stay pending and retry). Several stores (windows, processes) may share one connection: each owns the tabs it restored/created, session.json changes are read-merge-write under a named mutex, `LoadTabs` skips tabs another live store has open, orphan `.sql` files are recovered as tabs, a corrupt session.json is backed up. App: `EditorSessionManager.FlushAll()` runs on unhandled exceptions (UI and AppDomain), `SessionEnding` and exit. |
 | `History/` | `HistoryStore` (JSONL per connection, capped). |
 | `Search/` | `FuzzyMatcher` (used by the palette and sidebar). |
 
