@@ -1,0 +1,93 @@
+{
+  // TablePlsu default settings. Read-only: copy keys into your settings.json to override them key by key.
+  "general": {
+    "reopenWorkspacesOnStartup": true,
+    "newTabOpens": "sqlEditor"
+  },
+  "editor": {
+    "fontFamily": "Cascadia Mono",
+    "fontSize": 12,
+    "lineHeight": 1.2,
+    "tabSize": 4,
+    "insertSpaces": true,
+    "wordWrap": true,
+    "showInvisibles": false,
+    "highlightCurrentQuery": true,
+    "completeKey": "both",
+    "autocomplete": {
+      "tables": true,
+      "functions": true,
+      "keywords": true,
+      "disabled": false,
+      "addSpace": false,
+      "prefixSchema": true,
+      "uppercaseKeywords": true,
+      "autoClosePairs": true
+    },
+    "autoSaveTabs": "all",
+    "autoSaveDebounceMs": 500,
+    "returnOnError": false,
+    "resultViewMode": "split",
+    "defaultRowLimit": 1000
+  },
+  "grid": {
+    "fontFamily": "Segoe UI",
+    "fontSize": 12,
+    "rowPadding": 2,
+    "nullDisplay": "NULL",
+    "dateFormat": "yyyy-MM-dd HH:mm:ss"
+  },
+  "sidebar": {
+    "fontFamily": "Segoe UI",
+    "fontSize": 12,
+    "rowPadding": 2,
+    "lazyLoadSchemas": true,
+    "loadSystemSchemas": false,
+    "matching": "fuzzy"
+  },
+  "table": {
+    "pageSize": 300,
+    "estimateAboveRows": 500000
+  },
+  "connections": {
+    "keepAlive": true,
+    "commandTimeoutSeconds": 0
+  },
+  "security": {
+    "defaultSafeMode": "silent"
+  },
+  "history": {
+    "enabled": true,
+    "maxEntries": 10000
+  },
+  "theme": {
+    "mode": "auto",
+    "light": "Light",
+    "dark": "Dark",
+    "overrides": {}
+  },
+  // Command id -> binding ("Ctrl+Enter"), list of bindings, or null to unbind. Defaults come from the command list.
+  "keymap": {},
+  "tags": {
+    "local": "#8E8E93",
+    "testing": "#AF52DE",
+    "development": "#34C759",
+    "staging": "#FF9500",
+    "production": "#FF3B30"
+  },
+  "toolbar": {
+    "items": [
+      "toggleSidebar",
+      "connection",
+      "changes",
+      "safeMode",
+      "database",
+      "newSql",
+      "status",
+      "notifications",
+      "reload",
+      "command",
+      "panels"
+    ]
+  }
+}

@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tableplsu.local/settings.schema.json",
+  "title": "TablePlsu settings",
+  "type": "object",
+  "additionalProperties": false,
+  "$defs": {
+    "color": { "type": "string", "pattern": "^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$" },
+    "fontSize": { "type": "number", "minimum": 6, "maximum": 100 },
+    "binding": { "type": "string", "description": "Key chord such as \"Ctrl+Shift+Enter\"." }
+  },
+  "properties": {
+    "$schema": { "type": "string" },
+    "general": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "reopenWorkspacesOnStartup": { "type": "boolean", "default": true, "description": "Restore the last workspaces and their SQL tabs on launch." },
+        "newTabOpens": { "enum": ["sqlEditor", "empty"], "default": "sqlEditor", "description": "What Ctrl+T opens." }
+      }
+    },
+    "editor": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fontFamily": { "type": "string", "default": "Cascadia Mono" },
+        "fontSize": { "type": "number", "minimum": 9, "maximum": 100, "default": 12 },
+        "lineHeight": { "type": "number", "minimum": 1.0, "maximum": 5.0, "default": 1.2 },
+        "tabSize": { "type": "integer", "minimum": 1, "maximum": 16, "default": 4 },
+        "insertSpaces": { "type": "boolean", "default": true },
+        "wordWrap": { "type": "boolean", "default": true },
+        "showInvisibles": { "type": "boolean", "default": false },
+        "highlightCurrentQuery": { "type": "boolean", "default": true, "description": "Tint the statement Run Current would execute." },
+        "completeKey": { "enum": ["both", "enter", "tab"], "default": "both", "description": "Key that accepts an autocomplete item." },
+        "autocomplete": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "tables": { "type": "boolean", "default": true },
+            "functions": { "type": "boolean", "default": true },
+            "keywords": { "type": "boolean", "default": true },
+            "disabled": { "type": "boolean", "default": false },
+            "addSpace": { "type": "boolean", "default": false },
+            "prefixSchema": { "type": "boolean", "default": true, "description": "Prefix non-public schema names." },
+            "uppercaseKeywords": { "type": "boolean", "default": true },
+            "autoClosePairs": { "type": "boolean", "default": true }
+          }
+        },
+        "autoSaveTabs": { "enum": ["all", "first", "none"], "default": "all" },
+        "autoSaveDebounceMs": { "type": "integer", "minimum": 50, "maximum": 10000, "default": 500 },
+        "returnOnError": { "type": "boolean", "default": false, "description": "Stop a multi-statement run at the first error." },
+        "resultViewMode": { "enum": ["split", "append"], "default": "split" },
+        "defaultRowLimit": { "type": "integer", "minimum": 0, "default": 1000, "description": "0 = no limit." }
+      }
+    },
+    "grid": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fontFamily": { "type": "string", "default": "Segoe UI" },
+        "fontSize": { "$ref": "#/$defs/fontSize", "default": 12 },
+        "rowPadding": { "type": "number", "minimum": 0, "maximum": 40, "default": 2 },
+        "nullDisplay": { "type": "string", "default": "NULL" },
+        "dateFormat": { "type": "string", "default": "yyyy-MM-dd HH:mm:ss" }
+      }
+    },
+    "sidebar": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fontFamily": { "type": "string", "default": "Segoe UI" },
+        "fontSize": { "$ref": "#/$defs/fontSize", "default": 12 },
+        "rowPadding": { "type": "number", "minimum": 0, "maximum": 40, "default": 2 },
+        "lazyLoadSchemas": { "type": "boolean", "default": true },
+        "loadSystemSchemas": { "type": "boolean", "default": false },
+        "matching": { "enum": ["fuzzy", "contains"], "default": "fuzzy" }
+      }
+    },
+    "table": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pageSize": { "type": "integer", "minimum": 1, "default": 300 },
+        "estimateAboveRows": { "type": "integer", "minimum": 0, "default": 500000 }
+      }
+    },
+    "connections": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "keepAlive": { "type": "boolean", "default": true },
+        "commandTimeoutSeconds": { "type": "integer", "minimum": 0, "default": 0, "description": "0 = no timeout." }
+      }
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "defaultSafeMode": { "enum": ["silent", "alert1", "alert2", "safe1", "safe2"], "default": "silent" }
+      }
+    },
+    "history": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "maxEntries": { "type": "integer", "minimum": 1, "default": 10000 }
+      }
+    },
+    "theme": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "enum": ["auto", "light", "dark"], "default": "auto" },
+        "light": { "type": "string", "default": "Light" },
+        "dark": { "type": "string", "default": "Dark" },
+        "overrides": {
+          "type": "object",
+          "description": "Colour key (e.g. \"editor.keyword\") to colour.",
+          "additionalProperties": { "$ref": "#/$defs/color" }
+        }
+      }
+    },
+    "keymap": {
+      "type": "object",
+      "description": "Command id to binding, list of bindings, or null to unbind.",
+      "additionalProperties": {
+        "oneOf": [
+          { "$ref": "#/$defs/binding" },
+          { "type": "array", "items": { "$ref": "#/$defs/binding" } },
+          { "type": "null" }
+        ]
+      }
+    },
+    "tags": {
+      "type": "object",
+      "description": "Tag name to colour.",
+      "additionalProperties": { "$ref": "#/$defs/color" }
+    },
+    "toolbar": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "enum": ["toggleSidebar", "connection", "changes", "safeMode", "database", "newSql", "status", "notifications", "reload", "command", "panels"]
+          }
+        }
+      }
+    }
+  }
+}
