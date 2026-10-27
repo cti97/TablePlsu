@@ -15,6 +15,86 @@ public static class SettingsJsonEdits
         "{\n}\n";
 
     /// <summary>
+    /// Sets the dotted key (e.g. "editor.fontSize") to <paramref name="valueJson"/> (raw JSON text) by editing the text in
+    /// place, so comments, formatting and every other key survive. Missing parent objects are created; a parent that is
+    /// not an object is replaced. Returns null when <paramref name="text"/> is not valid JSON or its root is not an object.
+    /// </summary>
+    public static string? SetValue(string text, string dottedKey, string valueJson)
+    {
+        JsonTreeNode root;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text)) text = "{}";
+            root = JsonTree.Parse(text);
+        }
+        catch (JsonTreeException)
+        {
+            return null;
+        }
+        if (root.Kind != JsonValueKind.Object) return null;
+
+        var parts = dottedKey.Split('.');
+        var node = root;
+        var indent = ChildIndent(text, root, "");
+        for (var i = 0; i < parts.Length; i++)
+        {
+            var last = i == parts.Length - 1;
+            var prop = node.Find(parts[i]);
+            if (prop is null)
+            {
+                var value = last ? valueJson : Nested(parts.AsSpan(i + 1), valueJson, indent);
+                return InsertProperty(text, node, indent, Quote(parts[i]) + ": " + value);
+            }
+            if (last) return Replace(text, prop.Value, valueJson);
+            if (prop.Value.Kind != JsonValueKind.Object)
+                return Replace(text, prop.Value, Nested(parts.AsSpan(i + 1), valueJson, indent));
+            node = prop.Value;
+            indent = ChildIndent(text, node, indent);
+        }
+        return text;
+    }
+
+    private static string Quote(string name) => JsonSerializer.Serialize(name);
+
+    private static string Replace(string text, JsonTreeNode value, string replacement) =>
+        text[..value.Start] + replacement + text[(value.End + 1)..];
+
+    /// <summary>{ "a": { "b": value } } for the remaining key parts, indented under <paramref name="indent"/>.</summary>
+    private static string Nested(ReadOnlySpan<string> parts, string valueJson, string indent)
+    {
+        var inner = indent + "  ";
+        var value = parts.Length == 1 ? valueJson : Nested(parts[1..], valueJson, inner);
+        return "{\n" + inner + Quote(parts[0]) + ": " + value + "\n" + indent + "}";
+    }
+
+    /// <summary>The indentation of <paramref name="obj"/>'s properties: taken from its first property when that one starts a line.</summary>
+    private static string ChildIndent(string text, JsonTreeNode obj, string parentChildIndent)
+    {
+        if (obj.Properties.Count > 0)
+        {
+            var at = obj.Properties[0].NameStart;
+            var lineStart = text.LastIndexOf('\n', Math.Max(0, at - 1)) + 1;
+            var lead = text[lineStart..at];
+            if (lead.Length > 0 && string.IsNullOrWhiteSpace(lead) || lineStart == at && lineStart > 0) return lead;
+        }
+        return parentChildIndent + "  ";
+    }
+
+    private static string InsertProperty(string text, JsonTreeNode obj, string indent, string property)
+    {
+        if (obj.Properties.Count == 0)
+        {
+            var closeIndent = indent.Length >= 2 ? indent[..^2] : "";
+            return text[..(obj.Start + 1)] + "\n" + indent + property + "\n" + closeIndent + text[obj.End..];
+        }
+        var after = obj.Properties[^1].Value.End + 1;
+        var i = after;
+        while (i < obj.End && char.IsWhiteSpace(text[i])) i++;
+        if (text[i] == ',') return text[..(i + 1)] + "\n" + indent + property + "," + text[(i + 1)..];
+        return text[..after] + ",\n" + indent + property + text[after..];
+    }
+
+    /// <summary>
     /// Makes sure the root object has a top-level object property <paramref name="key"/> (for example "keymap"). Returns
     /// the (possibly) edited text with the inside of that object selected, or the caret placed on an empty line inside a
     /// newly inserted one. Returns null when <paramref name="text"/> is not valid JSON or its root is not an object.
