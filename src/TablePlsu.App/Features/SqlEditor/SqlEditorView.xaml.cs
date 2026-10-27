@@ -114,7 +114,28 @@ public partial class SqlEditorView : UserControl, ISqlEditorView
         _vm.Document.Changed += OnDocumentChanged;
         _vm.Closed += OnVmClosed;
         ApplyResultsVisibility();
+        ApplyRunButton();
         AttachCompletion();
+    }
+
+    /// <summary>Run becomes Cancel (error colour) while a query runs.</summary>
+    private void ApplyRunButton()
+    {
+        var running = _vm?.IsRunning == true;
+        RunButton.Content = running ? "■ Cancel" : "▶ Run";
+        RunButton.ToolTip = running
+            ? ShortcutText.Tooltip(CommandIds.QueryCancel)
+            : ShortcutText.Tooltip(_vm?.RunButtonRunsAll == true ? CommandIds.QueryRunAll : CommandIds.QueryRunCurrent);
+        if (running)
+        {
+            RunButton.SetResourceReference(BackgroundProperty, "c.app.error");
+            RunButton.SetResourceReference(BorderBrushProperty, "c.app.error");
+        }
+        else
+        {
+            RunButton.ClearValue(BackgroundProperty);
+            RunButton.ClearValue(BorderBrushProperty);
+        }
     }
 
     /// <summary>
@@ -168,6 +189,9 @@ public partial class SqlEditorView : UserControl, ISqlEditorView
         {
             case nameof(SqlEditorTabViewModel.IsResultsVisible):
                 ApplyResultsVisibility();
+                break;
+            case nameof(SqlEditorTabViewModel.IsRunning) or nameof(SqlEditorTabViewModel.RunButtonRunsAll):
+                ApplyRunButton();
                 break;
             case nameof(TabViewModelBase.IsActive) when _vm?.IsActive == true && _restored:
                 Dispatcher.BeginInvoke(FocusEditor, DispatcherPriority.Input);

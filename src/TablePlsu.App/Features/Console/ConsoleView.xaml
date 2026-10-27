@@ -6,15 +6,15 @@
     <DockPanel>
         <Border DockPanel.Dock="Top" Background="{DynamicResource c.app.toolbar}" BorderBrush="{DynamicResource c.app.border}" BorderThickness="0,0,0,1">
             <DockPanel Margin="8,1">
-                <Button DockPanel.Dock="Right" Content="Clear" Style="{StaticResource FlatButton}" Click="OnClearClick" ToolTip="Clear the console" />
-                <Button DockPanel.Dock="Right" Content="Copy" Style="{StaticResource FlatButton}" Click="OnCopyClick" ToolTip="Copy the selected lines (or all)" />
+                <Button DockPanel.Dock="Right" Content="Clear" Style="{DynamicResource FlatButton}" Click="OnClearClick" ToolTip="Clear the console" />
+                <Button DockPanel.Dock="Right" Content="Copy" Style="{DynamicResource FlatButton}" Click="OnCopyClick" ToolTip="Copy the selected lines (or all)" />
                 <TextBlock Text="Console" VerticalAlignment="Center" FontWeight="SemiBold" Foreground="{DynamicResource c.app.toolbarForeground}" />
-                <TextBlock x:Name="CountText" Style="{StaticResource MutedText}" VerticalAlignment="Center" Margin="8,0,0,0" />
+                <TextBlock x:Name="CountText" Style="{DynamicResource MutedText}" VerticalAlignment="Center" Margin="8,0,0,0" />
             </DockPanel>
         </Border>
         <ListBox x:Name="List" AutomationProperties.AutomationId="ConsoleList" ItemsSource="{Binding Entries}" SelectionMode="Extended"
                  VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
-                 ScrollViewer.HorizontalScrollBarVisibility="Disabled" FontFamily="{StaticResource MonoFont}" FontSize="12"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled" FontFamily="{DynamicResource MonoFont}" FontSize="12"
                  KeyDown="OnListKeyDown">
             <ListBox.ItemContainerStyle>
                 <Style TargetType="ListBoxItem">

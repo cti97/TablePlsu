@@ -7,6 +7,9 @@ using TablePlsu.Core.Editors;
 
 namespace TablePlsu.App.Tests.SqlEditor;
 
+// These tests stay synchronous on purpose: the AvalonEdit TextDocument may only be used by the thread that created it.
+#pragma warning disable xUnit1031
+
 [Collection(AppServicesCollection.Name)]
 public class EditorSessionTests
 {

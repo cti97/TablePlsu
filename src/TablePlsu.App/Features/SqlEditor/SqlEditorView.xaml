@@ -68,27 +68,15 @@
             <!-- Run bar -->
             <Border DockPanel.Dock="Top" Background="{DynamicResource c.app.toolbar}" BorderBrush="{DynamicResource c.app.border}" BorderThickness="0,0,0,1">
                 <DockPanel Margin="6,3" LastChildFill="True">
-                    <Button x:Name="RunButton" AutomationProperties.AutomationId="RunButton" Click="OnRunClick" MinWidth="70" Padding="10,2" Focusable="False">
-                        <Button.Style>
-                            <Style TargetType="Button" BasedOn="{StaticResource AccentButton}">
-                                <Setter Property="Content" Value="▶ Run" />
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding IsRunning}" Value="True">
-                                        <Setter Property="Content" Value="■ Cancel" />
-                                        <Setter Property="Background" Value="{DynamicResource c.app.error}" />
-                                        <Setter Property="BorderBrush" Value="{DynamicResource c.app.error}" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </Button.Style>
-                    </Button>
-                    <Button x:Name="RunMenuButton" Style="{StaticResource FlatButton}" Content="▾" Padding="6,2" Margin="1,0,8,0" Click="OnRunMenuClick" ToolTip="Run options" />
+                    <Button x:Name="RunButton" AutomationProperties.AutomationId="RunButton" Click="OnRunClick" MinWidth="70" Padding="10,2" Focusable="False"
+                            Style="{DynamicResource AccentButton}" Content="▶ Run" />
+                    <Button x:Name="RunMenuButton" Style="{DynamicResource FlatButton}" Content="▾" Padding="6,2" Margin="1,0,8,0" Click="OnRunMenuClick" ToolTip="Run options" />
                     <ComboBox x:Name="RowLimitBox" Width="120" VerticalAlignment="Center" Focusable="False" ToolTip="Row limit (remembered per connection)"
                               ItemsSource="{x:Static local:SqlEditorTabViewModel.RowLimitOptions}" DisplayMemberPath="Label"
                               SelectedValuePath="Value" SelectedValue="{Binding RowLimit, Mode=TwoWay}" />
-                    <TextBlock DockPanel.Dock="Right" Text="{Binding LinkedFilePath}" Style="{StaticResource MutedText}" VerticalAlignment="Center"
+                    <TextBlock DockPanel.Dock="Right" Text="{Binding LinkedFilePath}" Style="{DynamicResource MutedText}" VerticalAlignment="Center"
                                TextTrimming="CharacterEllipsis" MaxWidth="420" Margin="8,0,2,0" ToolTip="{Binding LinkedFilePath}" />
-                    <TextBlock Text="{Binding RunStatus}" Style="{StaticResource MutedText}" VerticalAlignment="Center" Margin="10,0,0,0" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Text="{Binding RunStatus}" Style="{DynamicResource MutedText}" VerticalAlignment="Center" Margin="10,0,0,0" TextTrimming="CharacterEllipsis" />
                 </DockPanel>
             </Border>
 
@@ -106,8 +94,8 @@
                     <Button Content="Find Next" Margin="8,0,0,0" Padding="8,1" Click="OnFindNextClick" />
                     <Button Content="Replace" Margin="4,0,0,0" Padding="8,1" Click="OnReplaceClick" />
                     <Button Content="Replace All" Margin="4,0,0,0" Padding="8,1" Click="OnReplaceAllClick" />
-                    <TextBlock x:Name="ReplaceStatus" Style="{StaticResource MutedText}" VerticalAlignment="Center" Margin="8,0,0,0" />
-                    <Button Content="✕" Style="{StaticResource FlatButton}" Margin="6,0,0,0" Click="OnCloseReplaceClick" ToolTip="Close (Esc)" />
+                    <TextBlock x:Name="ReplaceStatus" Style="{DynamicResource MutedText}" VerticalAlignment="Center" Margin="8,0,0,0" />
+                    <Button Content="✕" Style="{DynamicResource FlatButton}" Margin="6,0,0,0" Click="OnCloseReplaceClick" ToolTip="Close (Esc)" />
                 </StackPanel>
             </Border>
 
@@ -169,11 +157,11 @@
                                 ResultColumns="{Binding SelectedResult.Columns}" Rows="{Binding SelectedResult.Rows}"
                                 Visibility="{Binding SelectedResult.ShowData, Converter={x:Static infra:BoolToVisibilityConverter.Instance}, FallbackValue=Collapsed}" />
                 <TextBox x:Name="MessagesBox" IsReadOnly="True" BorderThickness="0" Padding="8,6" TextWrapping="Wrap" AcceptsReturn="True"
-                         VerticalScrollBarVisibility="Auto" FontFamily="{StaticResource MonoFont}"
+                         VerticalScrollBarVisibility="Auto" FontFamily="{DynamicResource MonoFont}"
                          Background="{DynamicResource c.app.window}" Foreground="{DynamicResource c.app.windowForeground}"
                          Text="{Binding SelectedResult.MessagesText, Mode=OneWay}"
                          Visibility="{Binding SelectedResult.ShowMessageView, Converter={x:Static infra:BoolToVisibilityConverter.Instance}, FallbackValue=Collapsed}" />
-                <TextBlock x:Name="ResultsHint" Style="{StaticResource MutedText}" HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center"
+                <TextBlock x:Name="ResultsHint" Style="{DynamicResource MutedText}" HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center"
                            Visibility="{Binding SelectedResult, Converter={x:Static infra:NullToVisibilityConverter.Instance}, ConverterParameter=invert}" />
             </Grid>
         </DockPanel>
