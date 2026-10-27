@@ -55,6 +55,10 @@ public static class Program
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static int RunApp(LaunchArgs launch, SingleInstance? instance)
     {
+        // Off the critical path: the JIT profile replays on a background thread and WPF's render system starts on another
+        // while the UI thread builds App and the main window (Infrastructure/StartupWarmup).
+        Infrastructure.StartupWarmup.StartJitProfile(AppPaths.Current.CacheDir, launch.MeasureStartup);
+        Infrastructure.StartupWarmup.StartRenderWarmup();
         var app = new App { Launch = launch, Instance = instance };
         app.InitializeComponent();
         return app.Run();

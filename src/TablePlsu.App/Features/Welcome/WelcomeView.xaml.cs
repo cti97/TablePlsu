@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
+using TablePlsu.App.Infrastructure;
 
 namespace TablePlsu.App.Features.Welcome;
 
@@ -12,13 +13,16 @@ public partial class WelcomeView : UserControl
 
     public WelcomeView()
     {
+        StartupMarks.Mark("welcome.ctor");
         InitializeComponent();
+        StartupMarks.Mark("welcome.xaml");
         DataContextChanged += (_, e) =>
         {
             if (_vm is not null) _vm.FocusSearchRequested -= OnFocusSearch;
             _vm = e.NewValue as WelcomeViewModel;
             if (_vm is not null) _vm.FocusSearchRequested += OnFocusSearch;
         };
+        Loaded += (_, _) => StartupMarks.Mark("loaded");
         Loaded += (_, _) => Dispatcher.BeginInvoke(FocusList, DispatcherPriority.Input);
     }
 

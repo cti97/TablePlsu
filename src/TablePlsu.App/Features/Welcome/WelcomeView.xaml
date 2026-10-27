@@ -123,13 +123,15 @@
         </Grid>
 
         <!-- Right: connection form (create / edit) -->
+        <!-- Typed (implicit) template, not ContentTemplate: an explicit ContentTemplate is applied even when Form is null, and
+             the first layout runs before the Visibility binding attaches, so the whole form was built at startup. -->
         <ContentControl Grid.Column="1" Content="{Binding Form}" Focusable="False"
                         Visibility="{Binding IsFormOpen, Converter={x:Static infra:BoolToVisibilityConverter.Instance}}">
-            <ContentControl.ContentTemplate>
-                <DataTemplate>
+            <ContentControl.Resources>
+                <DataTemplate DataType="{x:Type local:ConnectionFormViewModel}">
                     <local:ConnectionFormView />
                 </DataTemplate>
-            </ContentControl.ContentTemplate>
+            </ContentControl.Resources>
         </ContentControl>
     </Grid>
 </UserControl>
