@@ -107,6 +107,12 @@ public sealed partial class MainViewModel : ObservableObject, IWorkspaceHost, IW
         return true;
     }
 
+    /// <summary>True when the workspace has staged (uncommitted) changes.</summary>
+    public bool HasPendingChanges => Content is WorkspaceViewModel { HasPendingChanges: true };
+
+    /// <summary>Writes the workspace's autosave state now (hide to tray, quit, session end).</summary>
+    public void FlushAutosave() => (Content as WorkspaceViewModel)?.FlushAll();
+
     /// <summary>Window deactivated: flush autosave state.</summary>
     public void OnWindowDeactivated() => (Content as WorkspaceViewModel)?.FlushAll();
 }

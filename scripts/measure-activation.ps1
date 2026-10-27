@@ -1,0 +1,69 @@
+# Measures resident mode: "second launch → window visible" and "second process exit" times.
+# Usage: & .\scripts\measure-activation.ps1 [-Exe artifacts/publish/TablePlsu.App.exe] [-Runs 7]
+# Starts the exe with --background (keepRunningInTray on, throwaway TABLEPLSU_ROOT), then launches it -Runs times with
+# --measure-activation: each second process forwards its args over the instance pipe and exits; the running instance
+# shows its hidden window, logs "activation: N ms from second launch to window visible" (from the second process's
+# creation time to after the render pass that follows Show) to logs\startup.log and hides again. Ends with --quit.
+param(
+    [string]$Exe = "artifacts/publish/TablePlsu.App.exe",
+    [int]$Runs = 7
+)
+$ErrorActionPreference = "Stop"
+$path = (Resolve-Path $Exe).Path
+$root = Join-Path ([IO.Path]::GetTempPath()) ("tableplsu-activation-" + [Guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Force (Join-Path $root "roaming") | Out-Null
+Set-Content -Encoding utf8 (Join-Path $root "roaming\settings.json") '{ "general": { "keepRunningInTray": true, "reopenWorkspacesOnStartup": false } }'
+$log = Join-Path $root "local\logs\startup.log"
+$oldRoot = $env:TABLEPLSU_ROOT
+$env:TABLEPLSU_ROOT = $root
+
+function Get-Median([double[]]$values) {
+    $s = @($values | Sort-Object); $n = $s.Count
+    if ($n -eq 0) { return [double]::NaN }
+    if ($n % 2 -eq 1) { return $s[[int][Math]::Floor($n / 2)] }
+    return ($s[$n / 2 - 1] + $s[$n / 2]) / 2
+}
+
+function Get-ActivationLines { if (Test-Path $log) { @(Get-Content $log | Where-Object { $_ -match "activation: " }) } else { @() } }
+
+function Invoke-Second([string]$arg) {
+    $before = @(Get-ActivationLines).Count
+    $p = [Diagnostics.Process]::Start((New-Object Diagnostics.ProcessStartInfo $path, $arg -Property @{ UseShellExecute = $false }))
+    if (-not $p.WaitForExit(15000)) { $p.Kill(); throw "second launch did not exit" }
+    $exitMs = ($p.ExitTime - $p.StartTime).TotalMilliseconds
+    $deadline = [DateTime]::Now.AddSeconds(120)
+    while (@(Get-ActivationLines).Count -le $before) {
+        if ([DateTime]::Now -gt $deadline) { throw "no activation line logged" }
+        Start-Sleep -Milliseconds 50
+    }
+    $line = @(Get-ActivationLines)[-1]
+    $null = $line -match "activation: (\d+) ms.*Main at (\S+) ms, message received at (\S+) ms"
+    return [pscustomobject]@{ ExitMs = $exitMs; ShowMs = [double]$Matches[1]; MainMs = [double]$Matches[2]; RecvMs = [double]$Matches[3] }
+}
+
+$primary = $null
+try {
+    $pipesBefore = @([IO.Directory]::GetFiles("\\.\pipe\") | Where-Object { $_ -like "*TablePlsu-*" })
+    $primary = [Diagnostics.Process]::Start((New-Object Diagnostics.ProcessStartInfo $path, "--background" -Property @{ UseShellExecute = $false }))
+    # Wait until the primary listens (after its first, offscreen render); a launch before that would wait up to 5 s.
+    $deadline = [DateTime]::Now.AddSeconds(120)
+    while (@([IO.Directory]::GetFiles("\\.\pipe\") | Where-Object { $_ -like "*TablePlsu-*" -and $pipesBefore -notcontains $_ }).Count -eq 0) {
+        if ([DateTime]::Now -gt $deadline) { throw "primary never started listening" }
+        Start-Sleep -Milliseconds 100
+    }
+    $null = Invoke-Second "--measure-activation" # warm-up (also waits until the primary listens)
+    $exits = @(); $shows = @(); $mains = @(); $recvs = @()
+    for ($i = 1; $i -le $Runs; $i++) {
+        $r = Invoke-Second "--measure-activation"
+        Write-Output ("run {0}: second process reached Main {1:N0} ms, forwarded {2:N0} ms, exited {3:N0} ms; window visible {4:N0} ms after launch" -f $i, $r.MainMs, $r.RecvMs, $r.ExitMs, $r.ShowMs)
+        $exits += $r.ExitMs; $shows += $r.ShowMs; $mains += $r.MainMs; $recvs += $r.RecvMs
+    }
+    Write-Output ("median of {0} runs: second process reached Main {1:N0} ms, forwarded {2:N0} ms, exited {3:N0} ms; second launch to window visible {4:N0} ms" -f $Runs, (Get-Median $mains), (Get-Median $recvs), (Get-Median $exits), (Get-Median $shows))
+}
+finally {
+    $q = [Diagnostics.Process]::Start((New-Object Diagnostics.ProcessStartInfo $path, "--quit" -Property @{ UseShellExecute = $false }))
+    $null = $q.WaitForExit(10000)
+    if ($primary -and -not $primary.WaitForExit(10000)) { Write-Warning "primary did not quit; killing it"; $primary.Kill() }
+    $env:TABLEPLSU_ROOT = $oldRoot
+    Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
+}

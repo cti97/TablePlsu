@@ -53,7 +53,9 @@
       "additionalProperties": false,
       "properties": {
         "reopenWorkspacesOnStartup": { "type": "boolean", "default": true, "description": "Restore the last workspaces and their SQL tabs on launch." },
-        "newTabOpens": { "enum": ["sqlEditor", "empty"], "default": "sqlEditor", "description": "What Ctrl+T opens." }
+        "newTabOpens": { "enum": ["sqlEditor", "empty"], "default": "sqlEditor", "description": "What Ctrl+T opens." },
+        "keepRunningInTray": { "type": "boolean", "default": false, "description": "Closing the last window hides TablePlsu to the notification area (tray menu: Open, New Window, Quit) so the next launch is instant." },
+        "startWithWindows": { "type": "boolean", "default": false, "description": "Start hidden in the notification area when you sign in to Windows (HKCU Run entry with --background). Implies keepRunningInTray." }
       }
     },
     "editor": {

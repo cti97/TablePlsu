@@ -51,6 +51,12 @@ public sealed record GeneralSettings
 {
     public bool ReopenWorkspacesOnStartup { get; init; } = true;
     public NewTabOpens NewTabOpens { get; init; } = NewTabOpens.SqlEditor;
+
+    /// <summary>Closing the last window hides it to the notification area instead of exiting (resident mode).</summary>
+    public bool KeepRunningInTray { get; init; }
+
+    /// <summary>Registers <c>HKCU\…\Run</c> to start hidden (<c>--background</c>) at sign-in. Implies the tray icon.</summary>
+    public bool StartWithWindows { get; init; }
 }
 
 public sealed record EditorSettings

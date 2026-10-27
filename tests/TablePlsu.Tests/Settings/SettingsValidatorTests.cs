@@ -26,6 +26,14 @@ public class SettingsValidatorTests
     }
 
     [Fact]
+    public void Resident_mode_keys_are_known_booleans()
+    {
+        Assert.Empty(V("{ \"general\": { \"keepRunningInTray\": true, \"startWithWindows\": false } }"));
+        Assert.Equal("general.keepRunningInTray", Assert.Single(V("{ \"general\": { \"keepRunningInTray\": \"yes\" } }")).Path);
+        Assert.Equal("general.startWithWindows", Assert.Single(V("{ \"general\": { \"startWithWindows\": 1 } }")).Path);
+    }
+
+    [Fact]
     public void Syntax_error_reports_line_and_column()
     {
         var d = Assert.Single(V("{\n  \"editor\": {\n    \"fontSize\": 12,,\n  }\n}"));

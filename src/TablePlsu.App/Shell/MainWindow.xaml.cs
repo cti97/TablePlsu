@@ -19,6 +19,9 @@ public partial class MainWindow : Window
 
     public MainViewModel ViewModel { get; }
 
+    /// <summary>True once the window has really closed (not just hidden to the tray).</summary>
+    public bool IsClosed { get; private set; }
+
     protected override void OnSourceInitialized(EventArgs e)
     {
         base.OnSourceInitialized(e);
@@ -29,8 +32,22 @@ public partial class MainWindow : Window
     {
         base.OnClosing(e);
         if (e.Cancel) return;
-        var isLast = Application.Current.Windows.OfType<MainWindow>().Count(w => w != this && w.IsLoaded) == 0;
+        // Resident mode: the last window hides to the tray (autosave flushed) instead of closing.
+        if (ResidentMode.TryHideOnClose(this))
+        {
+            e.Cancel = true;
+            return;
+        }
+        // Quit closes every window: all of them stay in the reopen-on-startup list, like a plain exit.
+        var isLast = ResidentMode.Quitting
+            || Application.Current.Windows.OfType<MainWindow>().Count(w => w != this && w.IsLoaded && !w.IsClosed) == 0;
         if (!ViewModel.OnWindowClosing(isLast)) e.Cancel = true;
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        IsClosed = true;
+        base.OnClosed(e);
     }
 }
 

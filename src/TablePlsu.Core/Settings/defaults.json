@@ -2,7 +2,11 @@
   // TablePlsu default settings. Read-only: copy keys into your settings.json to override them key by key.
   "general": {
     "reopenWorkspacesOnStartup": true,
-    "newTabOpens": "sqlEditor"
+    "newTabOpens": "sqlEditor",
+    // Closing the last window hides TablePlsu to the notification area so the next launch is instant.
+    "keepRunningInTray": false,
+    // Start hidden in the notification area at Windows sign-in (implies keepRunningInTray).
+    "startWithWindows": false
   },
   "editor": {
     "fontFamily": "Cascadia Mono",
