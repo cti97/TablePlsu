@@ -1,0 +1,217 @@
+<UserControl x:Class="TablePlsu.App.Features.Sidebar.SidebarView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:infra="clr-namespace:TablePlsu.App.Infrastructure"
+             xmlns:sb="clr-namespace:TablePlsu.App.Features.Sidebar"
+             infra:CommandScopes.Scope="Sidebar"
+             FontFamily="{Binding SidebarFontFamily}" FontSize="{Binding SidebarFontSize}"
+             Foreground="{DynamicResource c.app.sidebarForeground}">
+    <UserControl.Resources>
+        <Style x:Key="SidebarTab" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{DynamicResource c.app.mutedForeground}" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="Bd" Background="Transparent" Padding="10,5" CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource c.app.hover}" />
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource c.app.sidebarSelection}" />
+                                <Setter Property="Foreground" Value="{DynamicResource c.app.sidebarForeground}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="SidebarRow" TargetType="ListBoxItem">
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Foreground" Value="{DynamicResource c.app.sidebarForeground}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="Bd" Background="Transparent" Padding="{Binding DataContext.RowPadding, RelativeSource={RelativeSource AncestorType=ListBox}}">
+                            <ContentPresenter />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource c.app.hover}" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource c.app.sidebarSelection}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Tabs + "+" -->
+        <Grid Margin="6,6,6,4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <RadioButton x:Name="ItemsTabButton" Style="{StaticResource SidebarTab}" Content="Items" GroupName="SidebarTabs" Checked="OnItemsTabChecked" />
+            <RadioButton x:Name="HistoryTabButton" Grid.Column="1" Style="{StaticResource SidebarTab}" Content="History" GroupName="SidebarTabs"
+                         Checked="OnHistoryTabChecked" Margin="2,0,0,0" />
+            <Button x:Name="NewButton" Grid.Column="3" Style="{StaticResource FlatButton}" Padding="6,2" MinHeight="0" Focusable="False"
+                    Click="OnNewClick" ToolTip="New…">
+                <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="&#xE710;" />
+            </Button>
+        </Grid>
+
+        <!-- Search -->
+        <Grid Grid.Row="1" Margin="6,0,6,6">
+            <TextBox x:Name="ItemsSearch" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" PreviewKeyDown="OnSearchKeyDown"
+                     AutomationProperties.Name="Search items" />
+            <TextBox x:Name="HistorySearch" Text="{Binding HistorySearchText, UpdateSourceTrigger=PropertyChanged}" PreviewKeyDown="OnSearchKeyDown"
+                     AutomationProperties.Name="Search history" Visibility="Collapsed" />
+            <TextBlock x:Name="SearchHint" Text="Search" Margin="9,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"
+                       Style="{StaticResource MutedText}" />
+        </Grid>
+
+        <!-- Items -->
+        <ListBox x:Name="ItemsList" Grid.Row="2" ItemsSource="{Binding Nodes}" SelectionMode="Extended"
+                 ItemContainerStyle="{StaticResource SidebarRow}"
+                 VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                 SelectionChanged="OnItemsSelectionChanged" PreviewMouseLeftButtonUp="OnItemsMouseUp"
+                 MouseDoubleClick="OnItemsDoubleClick" ContextMenuOpening="OnItemsContextMenuOpening"
+                 AutomationProperties.Name="Items">
+            <ListBox.ContextMenu>
+                <ContextMenu />
+            </ListBox.ContextMenu>
+            <ListBox.ItemTemplate>
+                <DataTemplate DataType="{x:Type sb:SidebarNode}">
+                    <Grid ToolTip="{Binding ToolTip}" Background="Transparent">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="16" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Border Width="{Binding Indent}" />
+                        <TextBlock Grid.Column="1" Style="{StaticResource Icon}" FontSize="9" Text="{Binding Chevron}"
+                                   Foreground="{DynamicResource c.app.mutedForeground}" />
+                        <TextBlock x:Name="ItemIcon" Grid.Column="2" Style="{StaticResource Icon}" FontSize="12" Margin="2,0,6,0" Text="{Binding Icon}"
+                                   Foreground="{DynamicResource c.app.accent}" />
+                        <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock x:Name="ItemText" Text="{Binding Text}" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="{Binding Detail}" Margin="5,0,0,0" TextTrimming="CharacterEllipsis" Style="{StaticResource MutedText}" />
+                        </StackPanel>
+                    </Grid>
+                    <DataTemplate.Triggers>
+                        <DataTrigger Binding="{Binding Kind}" Value="Section">
+                            <Setter TargetName="ItemText" Property="FontWeight" Value="SemiBold" />
+                            <Setter TargetName="ItemIcon" Property="Margin" Value="0" />
+                        </DataTrigger>
+                        <DataTrigger Binding="{Binding Kind}" Value="Schema">
+                            <Setter TargetName="ItemText" Property="FontWeight" Value="SemiBold" />
+                            <Setter TargetName="ItemIcon" Property="Foreground" Value="{DynamicResource c.app.mutedForeground}" />
+                        </DataTrigger>
+                        <DataTrigger Binding="{Binding Kind}" Value="Placeholder">
+                            <Setter TargetName="ItemText" Property="Foreground" Value="{DynamicResource c.app.mutedForeground}" />
+                            <Setter TargetName="ItemText" Property="FontStyle" Value="Italic" />
+                        </DataTrigger>
+                    </DataTemplate.Triggers>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+        <TextBlock x:Name="ItemsStatus" Grid.Row="2" Text="{Binding StatusText}" Style="{StaticResource MutedText}" Margin="12,8"
+                   VerticalAlignment="Top" TextWrapping="Wrap" IsHitTestVisible="False" />
+
+        <!-- History -->
+        <ListBox x:Name="HistoryList" Grid.Row="2" ItemsSource="{Binding HistoryItems}" SelectionMode="Extended" Visibility="Collapsed"
+                 ItemContainerStyle="{StaticResource SidebarRow}"
+                 VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                 SelectionChanged="OnHistorySelectionChanged" MouseDoubleClick="OnHistoryDoubleClick"
+                 AutomationProperties.Name="History">
+            <ListBox.ContextMenu>
+                <ContextMenu>
+                    <MenuItem Header="Open in New Tab" Click="OnHistoryOpen" />
+                    <MenuItem Header="Run" Click="OnHistoryRun" />
+                    <MenuItem Header="Copy" Click="OnHistoryCopy" />
+                    <Separator />
+                    <MenuItem Header="Delete" Click="OnHistoryDelete" InputGestureText="Delete" />
+                    <MenuItem Header="Clear All History…" Click="OnHistoryClear" />
+                    <Separator />
+                    <MenuItem Header="Refresh" Click="OnHistoryRefresh" />
+                </ContextMenu>
+            </ListBox.ContextMenu>
+            <ListBox.ItemTemplate>
+                <DataTemplate DataType="{x:Type sb:HistoryRow}">
+                    <StackPanel Margin="6,1" ToolTip="{Binding ToolTip}" Background="Transparent">
+                        <TextBlock x:Name="SqlText" Text="{Binding FirstLine}" TextTrimming="CharacterEllipsis" FontFamily="{StaticResource MonoFont}" />
+                        <TextBlock Text="{Binding Meta}" FontSize="10.5" TextTrimming="CharacterEllipsis" Style="{StaticResource MutedText}" />
+                    </StackPanel>
+                    <DataTemplate.Triggers>
+                        <DataTrigger Binding="{Binding IsError}" Value="True">
+                            <Setter TargetName="SqlText" Property="Foreground" Value="{DynamicResource c.app.error}" />
+                        </DataTrigger>
+                    </DataTemplate.Triggers>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+
+        <!-- Schema selector -->
+        <Border x:Name="SchemaBar" Grid.Row="3" BorderBrush="{DynamicResource c.app.border}" BorderThickness="0,1,0,0" Padding="6,4">
+            <Grid>
+                <Button x:Name="SchemaButton" Style="{StaticResource FlatButton}" HorizontalContentAlignment="Stretch" Click="OnSchemaButtonClick"
+                        Focusable="False" ToolTip="Choose which schemas show">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="&#xE8B7;" Margin="0,0,6,0" />
+                        <TextBlock Grid.Column="1" Text="{Binding SchemaSelectorText}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="2" Style="{StaticResource Icon}" FontSize="9" Text="&#xE70E;" Margin="6,0,0,0" />
+                    </Grid>
+                </Button>
+                <Popup x:Name="SchemaPopup" PlacementTarget="{Binding ElementName=SchemaButton}" Placement="Top" StaysOpen="False"
+                       AllowsTransparency="True" PopupAnimation="Fade">
+                    <Border Style="{StaticResource PopoverBorder}" Padding="8" MinWidth="220" MaxHeight="420">
+                        <DockPanel>
+                            <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,8,0,0">
+                                <Button Style="{StaticResource FlatButton}" Content="All" Click="OnSchemasAll" />
+                                <Button Style="{StaticResource FlatButton}" Content="None" Click="OnSchemasNone" Margin="4,0,0,0" />
+                            </StackPanel>
+                            <TextBlock DockPanel.Dock="Top" Text="Schemas" Style="{StaticResource MutedText}" Margin="2,0,0,6" />
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <ItemsControl ItemsSource="{Binding SchemaChoices}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type sb:SchemaChoice}">
+                                            <CheckBox Content="{Binding Name}" IsChecked="{Binding IsChecked}" Margin="2,3" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </DockPanel>
+                    </Border>
+                </Popup>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>
