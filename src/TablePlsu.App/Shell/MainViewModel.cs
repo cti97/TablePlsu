@@ -65,10 +65,12 @@ public sealed partial class MainViewModel : ObservableObject, IWorkspaceHost, IW
             old.CloseAsync().Forget();
         }
         var ws = new WorkspaceViewModel(profile, secrets, database, this);
+        // Connect first: TCP/TLS/auth/type loading run on the thread pool while editor tabs are restored and the
+        // workspace view is built, so the first query does not wait for them.
+        ws.ConnectAsync().Forget();
         Content = ws;
         OpenWorkspaces.Add(ws);
         AppServices.Features.RaiseWorkspaceOpened(ws);
-        ws.ConnectAsync().Forget();
     }
 
     public void CloseWorkspace(WorkspaceViewModel workspace)

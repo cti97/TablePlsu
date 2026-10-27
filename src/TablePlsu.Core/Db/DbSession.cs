@@ -93,6 +93,8 @@ public sealed class DbSession : IAsyncDisposable
             // Arrays containing NULLs are read as nullable element arrays instead of throwing.
             ArrayNullabilityMode = ArrayNullabilityMode.PerInstance,
             Pooling = true,
+            // Query + metadata connections are held; keep one warmed spare (see WarmUpPool) from being pruned.
+            MinPoolSize = 3,
             Timeout = 15,
         };
         if (!string.IsNullOrEmpty(secrets.Password)) b.Password = secrets.Password;
@@ -144,6 +146,7 @@ public sealed class DbSession : IAsyncDisposable
                 LastError = null;
                 SetState(DbSessionState.Connected);
                 StartKeepAlive();
+                WarmUpPool(_dataSource);
             }
             catch (Exception ex)
             {
@@ -465,6 +468,22 @@ public sealed class DbSession : IAsyncDisposable
         }
         RaiseLog($"{n.Severity}: {n.MessageText}");
     }
+
+    /// <summary>
+    /// Opens one spare physical connection in the background and returns it to the pool, so the first table page,
+    /// row count or commit (which use <see cref="OpenConnectionAsync"/>) does not pay TCP + TLS + auth + bootstrap.
+    /// </summary>
+    private void WarmUpPool(NpgsqlDataSource dataSource) => _ = Task.Run(async () =>
+    {
+        try
+        {
+            await using var conn = await dataSource.OpenConnectionAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is NpgsqlException or InvalidOperationException or ObjectDisposedException or TimeoutException or IOException)
+        {
+            // Best effort: the connection opens on demand later.
+        }
+    });
 
     private void StartKeepAlive()
     {
