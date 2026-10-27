@@ -72,6 +72,16 @@ public class SettingsValidatorTests
     }
 
     [Fact]
+    public void Sidebar_search_debounce_is_validated_and_clamped()
+    {
+        Assert.Empty(V("{ \"sidebar\": { \"searchDebounceMs\": 0 } }"));
+        Assert.Contains("≤ 2000", Assert.Single(V("{ \"sidebar\": { \"searchDebounceMs\": 5000 } }")).Message);
+        Assert.Contains("≥ 0", Assert.Single(V("{ \"sidebar\": { \"searchDebounceMs\": -1 } }")).Message);
+        var s = new AppSettings { Sidebar = new SidebarSettings { SearchDebounceMs = 99_999 } }.Normalize();
+        Assert.Equal(2000, s.Sidebar.SearchDebounceMs);
+    }
+
+    [Fact]
     public void Enum_values_are_checked()
     {
         var d = Assert.Single(V("{ \"theme\": { \"mode\": \"night\" } }"));

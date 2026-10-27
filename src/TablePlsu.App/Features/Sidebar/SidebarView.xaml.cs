@@ -180,6 +180,11 @@ public partial class SidebarView : UserControl
             var index = ItemsList.Items.IndexOf(sel);
             Dispatcher.BeginInvoke(() => FocusItem(ItemsList, index), DispatcherPriority.Background);
         }
+        else if (_vm.QueryJustCleared && ItemsList.SelectedItem is { } kept)
+        {
+            // Search cleared: the selection from before the search is back; bring it into view.
+            Dispatcher.BeginInvoke(() => ItemsList.ScrollIntoView(kept), DispatcherPriority.Background);
+        }
     }
 
     private void Reveal(string key)

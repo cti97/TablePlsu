@@ -47,7 +47,8 @@
     "rowPadding": 2,
     "lazyLoadSchemas": true,
     "loadSystemSchemas": false,
-    "matching": "fuzzy"
+    "matching": "fuzzy",
+    "searchDebounceMs": 120
   },
   "table": {
     "pageSize": 300,

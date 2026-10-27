@@ -65,6 +65,23 @@ public sealed partial class SidebarViewModel : ObservableObject, ICommandTarget,
     private List<HistoryRow> _historyAll = [];
     private int _historyVersion;
 
+    // Search: the flat candidate index of the current metadata snapshot, the pending (debounced, off-thread) search and
+    // the selection to bring back when the query is cleared.
+    private SidebarIndex? _index;
+    private CancellationTokenSource? _searchCts;
+    private int _searchVersion;
+    private string _appliedFilter = "";
+    private IReadOnlyList<string> _preSearchSelection = [];
+    private CancellationTokenSource? _historyCts;
+    private int _historyFilterVersion;
+    private int _debounceMs = 120;
+
+    /// <summary>
+    /// Below this many candidates (objects in the index, rows in History) a search filters synchronously on the
+    /// keystroke: it costs well under a millisecond, and small databases see no delay at all.
+    /// </summary>
+    public const int ImmediateSearchBelow = 1000;
+
     public SidebarViewModel(IWorkspace workspace, SidebarSchemaStore? store = null)
     {
         Workspace = workspace;
@@ -106,7 +123,7 @@ public sealed partial class SidebarViewModel : ObservableObject, ICommandTarget,
 
     partial void OnSearchTextChanged(string value)
     {
-        Rebuild();
+        Refresh(debounce: true);
         // Lazy schemas: searching needs the contents of every visible schema, so load the ones not loaded yet.
         if (value.Trim().Length > 0 && Workspace.State == DbSessionState.Connected)
         {
@@ -120,7 +137,7 @@ public sealed partial class SidebarViewModel : ObservableObject, ICommandTarget,
     [ObservableProperty]
     public partial string HistorySearchText { get; set; } = "";
 
-    partial void OnHistorySearchTextChanged(string value) => FilterHistory();
+    partial void OnHistorySearchTextChanged(string value) => RefilterHistory();
 
     [ObservableProperty]
     public partial int SelectedTabIndex { get; set; }
@@ -152,12 +169,29 @@ public sealed partial class SidebarViewModel : ObservableObject, ICommandTarget,
 
     public IReadOnlySet<string>? VisibleSchemas => _visibleSchemas;
 
+    /// <summary>A debounced/background search has not been applied yet.</summary>
+    public bool IsSearchPending => _searchCts is not null || _historyCts is not null;
+
+    /// <summary>True during the <see cref="NodesRebuilt"/> that follows clearing the search query.</summary>
+    public bool QueryJustCleared { get; private set; }
+
+    /// <summary>Times <see cref="Nodes"/> was replaced (diagnostics / perf tests).</summary>
+    public int NodesReplacedCount { get; private set; }
+
     // ---- tree -------------------------------------------------------------------------------------------------------
 
-    /// <summary>Rebuilds <see cref="Nodes"/> from the current metadata snapshot, keeping expansion and selection.</summary>
-    public void Rebuild()
+    /// <summary>Rebuilds <see cref="Nodes"/> from the current metadata snapshot, keeping expansion and selection (synchronous).</summary>
+    public void Rebuild() => Refresh(debounce: false, synchronous: true);
+
+    /// <summary>
+    /// Re-filters. Unfiltered views and small indexes are built right here; a query over a large index runs off the UI
+    /// thread (after the <c>sidebar.searchDebounceMs</c> typing pause when <paramref name="debounce"/>), cancelling the
+    /// previous one, and only the newest result is applied.
+    /// </summary>
+    private void Refresh(bool debounce, bool synchronous = false)
     {
         if (_disposed) return;
+        CancelSearch();
         var md = Workspace.Metadata.Current;
         if (!_expansionInitialized && !md.IsEmpty)
         {
@@ -172,17 +206,78 @@ public sealed partial class SidebarViewModel : ObservableObject, ICommandTarget,
         }
         UpdateSchemaChoices(md);
 
-        var connected = Workspace.State == DbSessionState.Connected;
-        var nodes = SidebarTree.Build(md, new SidebarTreeOptions
+        var index = _index = SidebarIndex.Create(md, _index);
+        var filter = SearchText.Trim();
+        var visible = EffectiveVisible(md);
+        var options = new SidebarTreeOptions
         {
-            Filter = SearchText,
+            Filter = filter,
             Matching = Matching,
-            VisibleSchemas = EffectiveVisible(md),
+            VisibleSchemas = visible,
             Expanded = _expanded,
-            NotLoadedText = connected ? "Loading…" : "Not loaded (connect to load)",
+            NotLoadedText = Workspace.State == DbSessionState.Connected ? "Loading…" : "Not loaded (connect to load)",
+        };
+        if (synchronous || filter.Length == 0 || index.CandidateCount < ImmediateSearchBelow)
+        {
+            Apply(md, SidebarTree.Build(index, options), filter);
+            return;
+        }
+
+        // Background: snapshot the mutable inputs (filtering expands everything, so the expansion set is not read).
+        options = options with { VisibleSchemas = visible is null ? null : new HashSet<string>(visible, StringComparer.Ordinal), Expanded = new HashSet<string>() };
+        var cts = _searchCts = new CancellationTokenSource();
+        var version = _searchVersion;
+        var delay = debounce ? _debounceMs : 0;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                if (delay > 0) await Task.Delay(delay, cts.Token).ConfigureAwait(false);
+                var nodes = SidebarTree.Build(index, options, cts.Token);
+                UiDispatch.Post(() =>
+                {
+                    if (version != _searchVersion || _disposed) return;
+                    _searchCts = null;
+                    cts.Dispose();
+                    Apply(md, nodes, filter);
+                }, System.Windows.Threading.DispatcherPriority.Background);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (ObjectDisposedException)
+            {
+            }
         });
+    }
+
+    private void CancelSearch()
+    {
+        _searchVersion++;
+        if (_searchCts is not { } cts) return;
+        _searchCts = null;
+        cts.Cancel();
+    }
+
+    private void Apply(DbMetadata md, List<SidebarNode> nodes, string filter)
+    {
         var selected = SelectedNodes.Select(n => n.Key).ToList();
-        Nodes.ReplaceAll(nodes);
+        var wasFiltering = _appliedFilter.Length > 0;
+        QueryJustCleared = wasFiltering && filter.Length == 0;
+        if (!wasFiltering && filter.Length > 0) _preSearchSelection = selected;
+        else if (QueryJustCleared)
+        {
+            // Clearing the query brings back what was selected before searching (unless a result was picked meanwhile).
+            if (selected.Count == 0) selected = [.. _preSearchSelection];
+            _preSearchSelection = [];
+        }
+        _appliedFilter = filter;
+
+        if (!SameRows(Nodes, nodes))
+        {
+            Nodes.ReplaceAll(nodes);
+            NodesReplacedCount++;
+        }
         StatusText = md.IsEmpty
             ? Workspace.State switch
             {
@@ -190,9 +285,24 @@ public sealed partial class SidebarViewModel : ObservableObject, ICommandTarget,
                 DbSessionState.Connected => Workspace.Metadata.IsRefreshing ? "Loading schema…" : "No schemas",
                 _ => "Not connected",
             }
-            : nodes.Count == 0 && SearchText.Trim().Length > 0 ? "No matches" : "";
+            : nodes.Count == 0 && filter.Length > 0 ? "No matches" : "";
         NodesRebuilt?.Invoke(selected);
-        if (connected) LoadExpandedSchemas(md);
+        QueryJustCleared = false;
+        if (Workspace.State == DbSessionState.Connected) LoadExpandedSchemas(md);
+    }
+
+    /// <summary>Same rows in the same state (item nodes are shared by the index, header rows are rebuilt each time).</summary>
+    private static bool SameRows(IList<SidebarNode> a, List<SidebarNode> b)
+    {
+        if (a.Count != b.Count) return false;
+        for (var i = 0; i < b.Count; i++)
+        {
+            SidebarNode x = a[i], y = b[i];
+            if (ReferenceEquals(x, y)) continue;
+            if (x.IsItem || y.IsItem || x.Kind != y.Kind || x.Key != y.Key || x.Text != y.Text || x.Detail != y.Detail || x.IsExpanded != y.IsExpanded
+                || x.ToolTip != y.ToolTip) return false;
+        }
+        return true;
     }
 
     private HashSet<string>? EffectiveVisible(DbMetadata md)
@@ -340,12 +450,70 @@ public sealed partial class SidebarViewModel : ObservableObject, ICommandTarget,
         FilterHistory();
     }
 
-    private void FilterHistory()
+    private void FilterHistory() => RefilterHistory(synchronous: true);
+
+    /// <summary>Like the Items search: small histories filter on the keystroke, large ones debounced off the UI thread.</summary>
+    private void RefilterHistory(bool synchronous = false)
     {
+        var version = ++_historyFilterVersion;
+        if (_historyCts is { } old)
+        {
+            _historyCts = null;
+            old.Cancel();
+        }
         var terms = HistorySearchText.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        HistoryItems.ReplaceAll(terms.Length == 0
-            ? _historyAll
-            : _historyAll.Where(r => terms.All(t => r.Sql.Contains(t, StringComparison.OrdinalIgnoreCase) || r.Entry.Database.Contains(t, StringComparison.OrdinalIgnoreCase))));
+        var all = _historyAll;
+        if (synchronous || terms.Length == 0 || all.Count < ImmediateSearchBelow)
+        {
+            ApplyHistory(terms.Length == 0 ? all : FilterHistoryRows(all, terms, CancellationToken.None));
+            return;
+        }
+        var cts = _historyCts = new CancellationTokenSource();
+        var delay = _debounceMs;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                if (delay > 0) await Task.Delay(delay, cts.Token).ConfigureAwait(false);
+                var rows = FilterHistoryRows(all, terms, cts.Token);
+                UiDispatch.Post(() =>
+                {
+                    if (version != _historyFilterVersion || _disposed) return;
+                    _historyCts = null;
+                    cts.Dispose();
+                    ApplyHistory(rows);
+                }, System.Windows.Threading.DispatcherPriority.Background);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        });
+    }
+
+    private static List<HistoryRow> FilterHistoryRows(List<HistoryRow> all, string[] terms, CancellationToken ct)
+    {
+        var result = new List<HistoryRow>();
+        for (var i = 0; i < all.Count; i++)
+        {
+            if ((i & 511) == 0) ct.ThrowIfCancellationRequested();
+            var r = all[i];
+            if (terms.All(t => r.Sql.Contains(t, StringComparison.OrdinalIgnoreCase) || r.Entry.Database.Contains(t, StringComparison.OrdinalIgnoreCase))) result.Add(r);
+        }
+        return result;
+    }
+
+    private void ApplyHistory(List<HistoryRow> rows)
+    {
+        if (rows.Count == HistoryItems.Count)
+        {
+            var same = true;
+            for (var i = 0; i < rows.Count && same; i++) same = ReferenceEquals(rows[i], HistoryItems[i]);
+            if (same) return;
+        }
+        HistoryItems.ReplaceAll(rows);
     }
 
     /// <summary>Double-click: the SQL in a new editor tab.</summary>
@@ -436,7 +604,8 @@ public sealed partial class SidebarViewModel : ObservableObject, ICommandTarget,
 
     // ---- events -----------------------------------------------------------------------------------------------------
 
-    private void OnMetadataChanged(object? sender, MetadataChangedEventArgs e) => UiDispatch.Run(Rebuild, System.Windows.Threading.DispatcherPriority.Background);
+    private void OnMetadataChanged(object? sender, MetadataChangedEventArgs e) =>
+        UiDispatch.Run(() => Refresh(debounce: false), System.Windows.Threading.DispatcherPriority.Background);
 
     private void OnStateChanged(object? sender, DbSessionState state) => Rebuild();
 
@@ -455,12 +624,15 @@ public sealed partial class SidebarViewModel : ObservableObject, ICommandTarget,
         SidebarFontSize = sb.FontSize;
         RowPadding = new Thickness(4, sb.RowPadding, 6, sb.RowPadding);
         Matching = sb.Matching;
+        _debounceMs = sb.SearchDebounceMs;
     }
 
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
+        CancelSearch();
+        _historyCts?.Cancel();
         Workspace.Metadata.Changed -= OnMetadataChanged;
         Workspace.StateChanged -= OnStateChanged;
         AppServices.SettingsChanged -= OnSettingsChanged;

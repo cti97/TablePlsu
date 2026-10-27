@@ -53,6 +53,7 @@ public class SettingsServiceTests
         Assert.True(s.Sidebar.LazyLoadSchemas);
         Assert.False(s.Sidebar.LoadSystemSchemas);
         Assert.Equal(SidebarMatching.Fuzzy, s.Sidebar.Matching);
+        Assert.Equal(120, s.Sidebar.SearchDebounceMs);
 
         Assert.Equal(300, s.Table.PageSize);
         Assert.Equal(500_000, s.Table.EstimateAboveRows);

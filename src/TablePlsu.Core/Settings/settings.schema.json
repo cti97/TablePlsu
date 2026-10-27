@@ -112,7 +112,8 @@
         "rowPadding": { "type": "number", "minimum": 0, "maximum": 40, "default": 2 },
         "lazyLoadSchemas": { "type": "boolean", "default": true },
         "loadSystemSchemas": { "type": "boolean", "default": false },
-        "matching": { "enum": ["fuzzy", "contains"], "default": "fuzzy" }
+        "matching": { "enum": ["fuzzy", "contains"], "default": "fuzzy" },
+        "searchDebounceMs": { "type": "integer", "minimum": 0, "maximum": 2000, "default": 120, "description": "Typing pause before the sidebar and History search re-filter a large list. 0 = filter on every keystroke." }
       }
     },
     "table": {

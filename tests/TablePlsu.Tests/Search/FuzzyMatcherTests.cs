@@ -87,4 +87,17 @@ public class FuzzyMatcherTests
         Assert.Null(FuzzyMatcher.MatchContains("odr", "orders"));
         Assert.Equal(new[] { 2, 3, 4 }, FuzzyMatcher.MatchContains("DER", "orders")!.Value.Indices);
     }
+
+    [Fact]
+    public void IsMatch_agrees_with_Match_and_MatchContains()
+    {
+        string[] candidates = ["orders", "sales.orders", "customers", "active_customers", "Customer_9", "a", "", "OrderTotals", "xyz_ord", "ordo"];
+        string[] patterns = ["", "o", "ord", "ORD", "ordr", "cust", "customers", "customerss", "^cust", "ers$", "^orders$", "^", "$", "^$", "s.o", "zz", "a", "ordo", "oo"];
+        foreach (var p in patterns)
+        foreach (var c in candidates)
+        {
+            Assert.True((FuzzyMatcher.Match(p, c) is not null) == FuzzyMatcher.IsMatch(p, c), $"fuzzy '{p}' vs '{c}'");
+            Assert.True((FuzzyMatcher.MatchContains(p, c) is not null) == FuzzyMatcher.IsMatch(p, c, contains: true), $"contains '{p}' vs '{c}'");
+        }
+    }
 }
