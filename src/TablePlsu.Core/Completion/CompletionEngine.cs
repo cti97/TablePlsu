@@ -179,8 +179,10 @@ public static class CompletionEngine
     // ───────────────────────── ranking ─────────────────────────
 
     /// <summary>A candidate with its ranking keys.</summary>
-    /// <remarks><see cref="Item"/> is null for a table whose item is built only if it makes the cut (<see cref="Table"/>).</remarks>
-    private readonly record struct Scored(CompletionItem? Item, int Class, int KindOrder, bool Exact, int SubOrder, int Fuzzy, string MatchName, TableInfo? Table = null, bool Qualify = false);
+    /// <remarks><see cref="Item"/> is null for a table or function whose item is built only if it makes the cut
+    /// (<see cref="Table"/>, or <see cref="Function"/> in schema <see cref="FnSchema"/>): most candidates never do.</remarks>
+    private readonly record struct Scored(CompletionItem? Item, int Class, int KindOrder, bool Exact, int SubOrder, int Fuzzy, string MatchName,
+        TableInfo? Table = null, bool Qualify = false, FunctionInfo? Function = null, string? FnSchema = null);
 
     private const int FuzzyPending = int.MinValue;
 
@@ -226,7 +228,7 @@ public static class CompletionEngine
             c = string.Compare(a.MatchName, b.MatchName, StringComparison.OrdinalIgnoreCase);
             if (c != 0) return c;
             c = string.CompareOrdinal(a.MatchName, b.MatchName);
-            return c != 0 ? c : string.CompareOrdinal(a.Item?.Detail ?? a.Table?.Schema, b.Item?.Detail ?? b.Table?.Schema);
+            return c != 0 ? c : string.CompareOrdinal(TieKey(a), TieKey(b));
         };
         var n = Math.Min(max <= 0 ? list.Count : max, list.Count);
         if (list.Count > n * 2)
@@ -243,9 +245,17 @@ public static class CompletionEngine
         }
         list.Sort(compare);
         var result = new CompletionItem[n];
-        for (var i = 0; i < n; i++) result[i] = list[i].Item ?? ctx.TableItem(list[i].Table!, list[i].Qualify);
+        for (var i = 0; i < n; i++)
+        {
+            var x = list[i];
+            result[i] = x.Item ?? (x.Table is not null ? ctx.TableItem(x.Table, x.Qualify) : ctx.FunctionItem(x.Function!, x.FnSchema!, x.Qualify));
+        }
         return result;
     }
+
+    /// <summary>The last tie-breaker: the item's detail (built for a deferred function only when a tie gets this far).</summary>
+    private static string? TieKey(in Scored x) =>
+        x.Item?.Detail ?? x.Table?.Schema ?? (x.Function is { } f ? Ctx.FunctionDetail(f, x.FnSchema!) : null);
 
     /// <summary>Per-request state: metadata, options, the typed prefix and the statement analysis.</summary>
     private sealed class Ctx(DbMetadata md, CompletionOptions o, string prefix, bool quoted, int caret, StatementAnalyzer an)
@@ -350,6 +360,15 @@ public static class CompletionEngine
             }
         }
 
+        public CompletionItem FunctionItem(FunctionInfo f, string schema, bool qualify)
+        {
+            var insert = (qualify ? Ident(schema) + "." : "") + Ident(f.Name) + "()";
+            return new CompletionItem(CompletionKind.Function, f.Name + "(" + f.Arguments + ")", insert, FunctionDetail(f, schema))
+            { CaretBack = f.Arguments.Length > 0 ? 1 : 0, Schema = schema };
+        }
+
+        public static string FunctionDetail(FunctionInfo f, string schema) => (f.ReturnType is null ? "procedure" : "→ " + f.ReturnType) + " · " + schema;
+
         public CompletionItem TableItem(TableInfo t, bool qualify)
         {
             var insert = (qualify ? Ident(t.Schema) + "." : "") + Ident(t.Name) + Space;
@@ -398,11 +417,8 @@ public static class CompletionEngine
                     names.Add(f.Name);
                     if (!Matches(f.Name)) continue;
                     var qualify = only is null && sub == 1 && o.PrefixSchema && s.Name != "public";
-                    var insert = (qualify ? Ident(s.Name) + "." : "") + Ident(f.Name) + "()";
-                    var detail = (f.ReturnType is null ? "procedure" : "→ " + f.ReturnType) + " · " + s.Name;
-                    var item = new CompletionItem(CompletionKind.Function, f.Name + "(" + f.Arguments + ")", insert, detail)
-                    { CaretBack = f.Arguments.Length > 0 ? 1 : 0, Schema = s.Name };
-                    AddMatched(list, item, f.Name, order, sub);
+                    var exact = prefix.Length > 0 && f.Name.Length == prefix.Length;
+                    list.Add(new Scored(null, _cls, order, exact, sub, _fz, f.Name, Qualify: qualify, Function: f, FnSchema: s.Name));
                 }
             }
             if (only is not null) return;

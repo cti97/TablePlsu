@@ -1,13 +1,12 @@
 using System.Diagnostics;
 using System.Windows;
-using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
-using System.Windows.Markup;
 using System.Windows.Threading;
 using ICSharpCode.AvalonEdit;
-using ICSharpCode.AvalonEdit.CodeCompletion;
 using ICSharpCode.AvalonEdit.Document;
 using ICSharpCode.AvalonEdit.Editing;
+using ICSharpCode.AvalonEdit.Rendering;
 using TablePlsu.App.Infrastructure;
 using TablePlsu.Core.Completion;
 using TablePlsu.Core.Metadata;
@@ -20,13 +19,16 @@ namespace TablePlsu.App.Features.Completion;
 /// <list type="bullet">
 /// <item>Pops up while typing identifiers, after <c>.</c>, and after a space that follows FROM/JOIN/UPDATE/INTO/TABLE.
 /// The list is recomputed (not filtered) on every keystroke so ranking stays the engine's.</item>
-/// <item>Accept with Enter and/or Tab (<c>editor.completeKey</c>), or double-click. Up/Down, Ctrl+N/Ctrl+P, PageUp/PageDown
-/// move. Esc closes the popup, and opens it when closed (Ctrl+Space also opens).</item>
+/// <item>Accept with Enter and/or Tab (<c>editor.completeKey</c>), or double-click. Up/Down, PageUp/PageDown, Home/End,
+/// Ctrl+N/Ctrl+P move. Esc closes the popup, and opens it when closed (Ctrl+Space also opens).</item>
+/// <item>Closes when the editor loses focus or is hidden, when the caret leaves the word, and when scrolling takes
+/// the word out of view.</item>
 /// <item>Auto-closes <c>( ' "</c> when <c>editor.autocomplete.autoClosePairs</c> is on (typing the closer steps over it,
 /// Backspace between an empty pair deletes both).</item>
 /// <item>Lazy schemas: when the answer needs a schema that is not loaded yet, it is loaded in the background and the open
 /// popup refreshes.</item>
 /// </list>
+/// The popup is the per-thread <see cref="CompletionPopup"/> shown in this editor's adorner layer (no window per open).
 /// Usage: <c>var completion = SqlCompletion.Attach(editor, workspace);</c> and dispose it with the editor.
 /// </summary>
 public sealed class SqlCompletion : IDisposable
@@ -38,8 +40,10 @@ public sealed class SqlCompletion : IDisposable
     private readonly Func<string, Task>? _ensureSchema;
     private readonly MetadataCache? _cache;
     private readonly HashSet<string> _requestedSchemas = new(StringComparer.Ordinal);
-    private readonly Dictionary<CompletionItem, SqlCompletionData> _dataCache = [];
-    private CompletionWindow? _window;
+    private CompletionAdorner? _adorner;
+    private AdornerLayer? _layer;
+    private bool _open;
+    private int _startOffset, _endOffset;
     private bool _scheduled, _pendingOpen, _pendingExplicit, _pendingAfterSpace;
     private bool _disposed;
 
@@ -51,9 +55,21 @@ public sealed class SqlCompletion : IDisposable
 
     public TextEditor Editor => _editor;
 
-    public bool IsOpen => _window is not null;
+    public bool IsOpen => _open;
 
-    public CompletionWindow? Window => _window;
+    /// <summary>The popup while it is open here (null when closed).</summary>
+    public CompletionPopup? Popup => _open ? CompletionPopup.Shared : null;
+
+    /// <summary>The rows shown (empty when closed).</summary>
+    public IReadOnlyList<SqlCompletionData> Items => Popup?.Items ?? [];
+
+    /// <summary>The selected row (null when closed).</summary>
+    public SqlCompletionData? SelectedItem => Popup?.SelectedItem;
+
+    /// <summary>Document offset where the replaced word starts / the caret was at the last refresh.</summary>
+    public int StartOffset => _startOffset;
+
+    public int EndOffset => _endOffset;
 
     /// <summary>The last engine answer (diagnostics / tests).</summary>
     public CompletionResult? LastResult { get; private set; }
@@ -89,11 +105,12 @@ public sealed class SqlCompletion : IDisposable
         _area.TextEntered += OnTextEntered;
         _area.Caret.PositionChanged += OnCaretChanged;
         _area.DocumentChanged += OnDocumentReplaced;
-        if (_area.Document is { } doc)
-        {
-            doc.Changed += OnDocumentChanged;
-            _trackedDocs.Add(doc);
-        }
+        _area.LostKeyboardFocus += OnLostFocus;
+        _area.TextView.ScrollOffsetChanged += OnScrolled;
+        _editor.IsVisibleChanged += OnVisibleChanged;
+        _editor.Loaded += OnEditorLoaded;
+        if (_editor.IsLoaded) SchedulePrepare();
+        Track(_area.Document);
         if (_cache is not null) _cache.Changed += OnMetadataChanged;
     }
 
@@ -107,9 +124,21 @@ public sealed class SqlCompletion : IDisposable
         _area.TextEntered -= OnTextEntered;
         _area.Caret.PositionChanged -= OnCaretChanged;
         _area.DocumentChanged -= OnDocumentReplaced;
-        foreach (var d in _trackedDocs) d.Changed -= OnDocumentChanged;
-        _trackedDocs.Clear();
+        _area.LostKeyboardFocus -= OnLostFocus;
+        _area.TextView.ScrollOffsetChanged -= OnScrolled;
+        _editor.IsVisibleChanged -= OnVisibleChanged;
+        _editor.Loaded -= OnEditorLoaded;
+        Track(null);
         if (_cache is not null) _cache.Changed -= OnMetadataChanged;
+        var popup = CompletionPopup.Shared;
+        if (popup.Owner == this) popup.Owner = null;
+        if (_adorner is not null)
+        {
+            _adorner.Child = null;
+            _layer?.Remove(_adorner);
+            _adorner = null;
+            _layer = null;
+        }
     }
 
     // ───────────────────────── public actions ─────────────────────────
@@ -119,26 +148,42 @@ public sealed class SqlCompletion : IDisposable
 
     public void Close()
     {
-        var w = _window;
-        if (w is null) return;
-        _window = null;
+        if (!_open) return;
+        _open = false;
         if (Active == this) Active = null;
-        w.Close();
+        if (_adorner is not null) _adorner.Visibility = Visibility.Collapsed;
     }
 
     /// <summary>Moves the popup selection by <paramref name="delta"/> rows (wraps at the ends).</summary>
     public void MoveSelection(int delta)
     {
-        if (_window?.CompletionList.ListBox is not { } lb || lb.Items.Count == 0) return;
-        var i = lb.SelectedIndex + delta;
-        if (i < 0) i = lb.Items.Count - 1;
-        else if (i >= lb.Items.Count) i = 0;
-        lb.SelectedIndex = i;
-        lb.ScrollIntoView(lb.SelectedItem);
+        if (Popup is not { } p || p.Items.Count == 0) return;
+        var i = p.SelectedIndex + delta;
+        if (i < 0) i = p.Items.Count - 1;
+        else if (i >= p.Items.Count) i = 0;
+        p.Select(i);
     }
 
-    /// <summary>Accepts the selected item (as Enter/Tab would).</summary>
-    public void AcceptSelected() => _window?.CompletionList.RequestInsertion(EventArgs.Empty);
+    /// <summary>Moves the popup selection by <paramref name="delta"/> rows, stopping at the ends (arrow keys, paging).</summary>
+    private void StepSelection(int delta)
+    {
+        if (Popup is not { } p || p.Items.Count == 0) return;
+        p.Select(p.SelectedIndex + delta);
+    }
+
+    /// <summary>Accepts the selected item (as Enter/Tab would): closes the popup, then replaces the word.</summary>
+    public void AcceptSelected()
+    {
+        if (!_open) return;
+        var item = SelectedItem?.Item;
+        var start = _startOffset;
+        var end = _endOffset;
+        Close();
+        if (item is null || _area.Document is not { } doc) return;
+        start = Math.Clamp(start, 0, doc.TextLength);
+        end = Math.Clamp(end, start, doc.TextLength);
+        Insert(_area, new TextSegment { StartOffset = start, EndOffset = end }, item);
+    }
 
     /// <summary>Runs any scheduled refresh now (tests).</summary>
     public void FlushPending()
@@ -156,7 +201,7 @@ public sealed class SqlCompletion : IDisposable
         var mods = Keyboard.Modifiers;
         var completeKey = _settings().CompleteKey;
 
-        if (_window is not null)
+        if (_open)
         {
             switch (key)
             {
@@ -180,6 +225,12 @@ public sealed class SqlCompletion : IDisposable
                     MoveSelection(-1);
                     e.Handled = true;
                     return;
+                case Key.Down: StepSelection(1); e.Handled = true; return;
+                case Key.Up: StepSelection(-1); e.Handled = true; return;
+                case Key.PageDown: StepSelection(CompletionPopup.Shared.VisibleItemCount); e.Handled = true; return;
+                case Key.PageUp: StepSelection(-CompletionPopup.Shared.VisibleItemCount); e.Handled = true; return;
+                case Key.Home: StepSelection(int.MinValue / 2); e.Handled = true; return;
+                case Key.End: StepSelection(int.MaxValue / 2); e.Handled = true; return;
             }
             return;
         }
@@ -188,7 +239,7 @@ public sealed class SqlCompletion : IDisposable
         {
             if (_settings().Autocomplete.Disabled) return;
             Open();
-            if (_window is not null || key == Key.Space) e.Handled = true;
+            if (_open || key == Key.Space) e.Handled = true;
             return;
         }
 
@@ -243,8 +294,8 @@ public sealed class SqlCompletion : IDisposable
         if (char.IsLetter(c) || c == '_' || c == '.' || c == '"' && IsOpeningQuotedIdent())
             Schedule(open: true, afterSpace: false);
         else if (c == ' ' && e.Text.Length == 1)
-            Schedule(open: _window is null, afterSpace: true);
-        else if (_window is not null)
+            Schedule(open: !_open, afterSpace: true);
+        else if (_open)
             Schedule(open: false, afterSpace: false);
     }
 
@@ -273,28 +324,67 @@ public sealed class SqlCompletion : IDisposable
 
     private void OnCaretChanged(object? sender, EventArgs e)
     {
-        if (_window is not null) Schedule(open: false, afterSpace: false);
+        if (!_open) return;
+        // The caret left the word being completed (click elsewhere, arrow past it): close, as AvalonEdit's window did.
+        var o = _area.Caret.Offset;
+        if (o < _startOffset || o > _endOffset) { Close(); return; }
+        Schedule(open: false, afterSpace: false);
+    }
+
+    private void OnDocumentChanging(object? sender, DocumentChangeEventArgs e)
+    {
+        if (!_open) return;
+        // Deleting right in front of the word (Backspace after "u.") closes; otherwise the word's ends follow the edit.
+        if (e.RemovalLength > 0 && e.Offset + e.RemovalLength == _startOffset) { Close(); return; }
+        _startOffset = e.GetNewOffset(_startOffset, AnchorMovementType.BeforeInsertion);
+        _endOffset = e.GetNewOffset(_endOffset, AnchorMovementType.AfterInsertion);
     }
 
     private void OnDocumentChanged(object? sender, DocumentChangeEventArgs e)
     {
-        if (_window is not null) Schedule(open: false, afterSpace: false);
+        if (_open) Schedule(open: false, afterSpace: false);
     }
 
     private void OnDocumentReplaced(object? sender, EventArgs e)
     {
         Close();
         // TextArea.DocumentChanged: the old document is gone; follow the new one.
-        foreach (var d in _trackedDocs) d.Changed -= OnDocumentChanged;
-        _trackedDocs.Clear();
-        if (_area.Document is { } doc)
+        Track(_area.Document);
+    }
+
+    private TextDocument? _trackedDoc;
+
+    private void Track(TextDocument? doc)
+    {
+        if (_trackedDoc is not null)
         {
+            _trackedDoc.Changing -= OnDocumentChanging;
+            _trackedDoc.Changed -= OnDocumentChanged;
+        }
+        _trackedDoc = doc;
+        if (doc is not null)
+        {
+            doc.Changing += OnDocumentChanging;
             doc.Changed += OnDocumentChanged;
-            _trackedDocs.Add(doc);
         }
     }
 
-    private readonly List<TextDocument> _trackedDocs = [];
+    private void OnLostFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        if (_open && !_area.IsKeyboardFocusWithin) Close();
+    }
+
+    private void OnVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        if (!_editor.IsVisible) Close();
+    }
+
+    private void OnScrolled(object? sender, EventArgs e)
+    {
+        if (!_open) return;
+        // Follow the word while it stays in view; close once scrolling takes it out (AvalonEdit's rule).
+        if (!PlaceAtWord()) Close();
+    }
 
     private void OnMetadataChanged(object? sender, MetadataChangedEventArgs e)
     {
@@ -303,7 +393,7 @@ public sealed class SqlCompletion : IDisposable
         {
             if (_disposed) return;
             _requestedSchemas.Clear();
-            if (_window is not null) Schedule(open: false, afterSpace: false);
+            if (_open) Schedule(open: false, afterSpace: false);
         }, DispatcherPriority.Background);
     }
 
@@ -362,21 +452,127 @@ public sealed class SqlCompletion : IDisposable
                 return;
             }
 
-            if (_window is null)
-            {
-                if (!open && !explicitOpen) return;
-                CreateWindow();
-            }
-            var w = _window!;
-            w.StartOffset = result.ReplaceStart;
-            w.EndOffset = caret;
-            SetItems(w, items);
+            if (!_open && !open && !explicitOpen) return;
+            _startOffset = result.ReplaceStart;
+            _endOffset = caret;
+            if (!_open && !Show()) return;
+            CompletionPopup.Shared.SetItems(items);
+            PlaceAtWord();
         }
         finally
         {
             LastRefreshMs = sw.Elapsed.TotalMilliseconds;
             Refreshed?.Invoke(this, EventArgs.Empty);
         }
+    }
+
+    /// <summary>Makes the popup visible here (after <see cref="Adopt"/>). False when the editor is not in a window.</summary>
+    private bool Show()
+    {
+        if (!Adopt()) return false;
+        _adorner!.Visibility = Visibility.Visible;
+        _open = true;
+        Active = this;
+        return true;
+    }
+
+    private static readonly Lazy<Task> _engineWarmUp = new(() => Task.Run(WarmUpEngine));
+
+    /// <summary>
+    /// Once per process, when the first editor appears: runs the engine over a tiny catalog on a pool thread so its
+    /// code is compiled (JIT is process-wide) before the first keystroke needs it on the UI thread.
+    /// </summary>
+    public static Task EngineWarmUp => _engineWarmUp.Value;
+
+    private static void WarmUpEngine()
+    {
+        var md = new DbMetadata
+        {
+            SearchPath = ["public"],
+            Schemas =
+            [
+                new SchemaInfo
+                {
+                    Name = "public", IsLoaded = true,
+                    Tables = [new TableInfo { Schema = "public", Name = "items", Columns = [new ColumnInfo { Name = "id", DataType = "integer" }] }],
+                    Functions = [new FunctionInfo { Schema = "public", Name = "item_count", Arguments = "x integer", ReturnType = "integer" }],
+                },
+                new SchemaInfo { Name = "other", IsLoaded = true, Tables = [new TableInfo { Schema = "other", Name = "things" }] },
+            ],
+        };
+        string[] samples = ["sel", "select * from it", "select * from i", "select * from itm", "select i.id from items i where i", "select x from other.t",
+                            "select * from items where ite", "insert into items (i", "with c as (select id from items) select * from c join items on c."];
+        // MaxItems 1 also takes the top-n heap path that big catalogs use.
+        var options = new[] { CompletionOptions.Default, CompletionOptions.Default with { MaxItems = 1 } };
+        try
+        {
+            foreach (var o in options)
+            foreach (var sql in samples)
+                CompletionEngine.Complete(sql, sql.Length, md, o);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine("completion warm-up failed: " + ex);   // only a warm-up; the real call reports its own errors
+        }
+    }
+
+    private void OnEditorLoaded(object sender, RoutedEventArgs e) => SchedulePrepare();
+
+    private void SchedulePrepare() => _editor.Dispatcher.BeginInvoke(Prepare, DispatcherPriority.ApplicationIdle);
+
+    /// <summary>
+    /// Idle-time warm-up when the editor appears: moves the (hidden) shared popup into this editor's adorner layer so the
+    /// first popup here does not pay for re-parenting (resource / inherited-property invalidation, template, row repaint).
+    /// Skipped while another editor shows it.
+    /// </summary>
+    private void Prepare()
+    {
+        if (_disposed || _open || !_editor.IsLoaded) return;
+        _ = EngineWarmUp;
+        var popup = CompletionPopup.Shared;
+        if (popup.Owner is { IsOpen: true }) return;
+        if (Adopt()) _ = popup.WarmUp();
+    }
+
+    /// <summary>Puts the shared popup (hidden) into this editor's adorner layer. False when the editor is not in a window.</summary>
+    private bool Adopt()
+    {
+        var layer = AdornerLayer.GetAdornerLayer(_editor);
+        if (layer is null) return false;
+        _adorner ??= new CompletionAdorner(_editor);
+        if (!ReferenceEquals(_layer, layer))
+        {
+            _layer?.Remove(_adorner);
+            layer.Add(_adorner);
+            _layer = layer;
+        }
+        var popup = CompletionPopup.Shared;
+        if (popup.Owner != this)
+        {
+            if (popup.Owner is { } previous)
+            {
+                previous.Close();
+                if (previous._adorner is not null) previous._adorner.Child = null;
+            }
+            popup.Owner = this;
+        }
+        _adorner.Child = popup;
+        return true;
+    }
+
+    /// <summary>Anchors the popup under (or above) the start of the word. False when the word is scrolled out of view.</summary>
+    private bool PlaceAtWord()
+    {
+        if (_adorner is null || _area.Document is not { } doc) return false;
+        var view = _area.TextView;
+        var pos = new TextViewPosition(doc.GetLocation(Math.Clamp(_startOffset, 0, doc.TextLength)));
+        var bottom = view.GetVisualPosition(pos, VisualYPosition.LineBottom);
+        var top = view.GetVisualPosition(pos, VisualYPosition.LineTop);
+        var visible = new Rect(view.HorizontalOffset, view.VerticalOffset, view.ActualWidth, view.ActualHeight);
+        if (!visible.Contains(bottom) && !visible.Contains(top)) return false;
+        var shift = (Vector)view.TranslatePoint(default, _editor) - view.ScrollOffset;
+        _adorner.SetAnchor(bottom + shift, top + shift);
+        return true;
     }
 
     private void RequestSchemas(CompletionResult result)
@@ -391,106 +587,10 @@ public sealed class SqlCompletion : IDisposable
                 if (t.IsFaulted) _ = t.Exception; // observed; nothing to show
                 _editor.Dispatcher.BeginInvoke(() =>
                 {
-                    if (!_disposed && _window is not null) Schedule(open: false, afterSpace: false);
+                    if (!_disposed && _open) Schedule(open: false, afterSpace: false);
                 }, DispatcherPriority.Background);
             }, TaskScheduler.Default);
         }
-    }
-
-    private void CreateWindow()
-    {
-        var w = new CompletionWindow(_area)
-        {
-            CloseAutomatically = true,
-            CloseWhenCaretAtBeginning = false,
-            Width = 420,
-            MaxHeight = 320,
-            SizeToContent = SizeToContent.Height,
-            BorderThickness = new Thickness(1),
-            Padding = new Thickness(0),
-        };
-        w.SetResourceReference(Control.BackgroundProperty, "c.app.sidebar");
-        w.SetResourceReference(Control.ForegroundProperty, "c.app.sidebarForeground");
-        w.SetResourceReference(Control.BorderBrushProperty, "c.app.border");
-        var list = w.CompletionList;
-        list.IsFiltering = false;
-        list.SetResourceReference(Control.BackgroundProperty, "c.app.sidebar");
-        list.SetResourceReference(Control.ForegroundProperty, "c.app.sidebarForeground");
-        list.Loaded += (_, _) => StyleList(list);
-        list.ApplyTemplate();
-        StyleList(list);
-        w.Closed += (_, _) =>
-        {
-            if (_window == w) _window = null;
-            if (Active == this && _window is null) Active = null;
-        };
-        _window = w;
-        Active = this;
-        w.Show();
-    }
-
-    private static Style? _itemStyle;
-
-    private static void StyleList(CompletionList list)
-    {
-        if (list.ListBox is not { } lb || lb.ItemContainerStyle is not null) return;
-        lb.ItemContainerStyle = _itemStyle ??= (Style)XamlReader.Parse(ItemStyleXaml);
-        lb.SetResourceReference(Control.BackgroundProperty, "c.app.sidebar");
-        lb.SetResourceReference(Control.ForegroundProperty, "c.app.sidebarForeground");
-        lb.BorderThickness = new Thickness(0);
-        ScrollViewer.SetHorizontalScrollBarVisibility(lb, ScrollBarVisibility.Disabled);
-        VirtualizingPanel.SetIsVirtualizing(lb, true);
-        VirtualizingPanel.SetVirtualizationMode(lb, VirtualizationMode.Recycling);
-    }
-
-    private const string ItemStyleXaml = """
-        <Style xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" TargetType="ListBoxItem">
-          <Setter Property="Foreground" Value="{DynamicResource c.app.sidebarForeground}" />
-          <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-          <Setter Property="Padding" Value="4,1,6,1" />
-          <Setter Property="Template">
-            <Setter.Value>
-              <ControlTemplate TargetType="ListBoxItem">
-                <Border x:Name="Bd" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Background="Transparent" Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
-                  <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center" />
-                </Border>
-                <ControlTemplate.Triggers>
-                  <Trigger Property="IsMouseOver" Value="True">
-                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource c.app.hover}" />
-                  </Trigger>
-                  <Trigger Property="IsSelected" Value="True">
-                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource c.app.sidebarSelection}" />
-                  </Trigger>
-                </ControlTemplate.Triggers>
-              </ControlTemplate>
-            </Setter.Value>
-          </Setter>
-        </Style>
-        """;
-
-    private void SetItems(CompletionWindow w, IReadOnlyList<CompletionItem> items)
-    {
-        var data = w.CompletionList.CompletionData;
-        var same = data.Count == items.Count;
-        for (var i = 0; same && i < items.Count; i++)
-            same = ((SqlCompletionData)data[i]).Item == items[i];
-        if (!same)
-        {
-            if (_dataCache.Count > 2000) _dataCache.Clear();
-            data.Clear();
-            foreach (var item in items)
-            {
-                if (!_dataCache.TryGetValue(item, out var d)) _dataCache[item] = d = new SqlCompletionData(item, this);
-                data.Add(d);
-            }
-        }
-        var lb = w.CompletionList.ListBox;
-        if (lb is not null && lb.Items.Count > 0)
-        {
-            lb.SelectedIndex = 0;
-            lb.ScrollIntoView(lb.Items[0]);
-        }
-        else if (data.Count > 0) w.CompletionList.SelectedItem = data[0];
     }
 
     /// <summary>Called by an accepted item: replace the word (and the rest of it after the caret), place the caret.</summary>

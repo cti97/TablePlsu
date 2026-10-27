@@ -27,9 +27,10 @@ public class SqlCompletionTests(ITestOutputHelper output)
             catch (Exception ex) { error = ex; }
             finally { try { Dispatcher.CurrentDispatcher.InvokeShutdown(); } catch (NullReferenceException) { } }
         });
+        t.IsBackground = true;
         t.SetApartmentState(ApartmentState.STA);
         t.Start();
-        t.Join();
+        if (!t.Join(TimeSpan.FromSeconds(120))) throw new TimeoutException("STA test body did not finish in 120 s");
         if (error is not null) throw new Xunit.Sdk.XunitException("STA body failed: " + error);
     }
 
@@ -37,8 +38,13 @@ public class SqlCompletionTests(ITestOutputHelper output)
     private static void DoEvents()
     {
         var frame = new DispatcherFrame();
-        Dispatcher.CurrentDispatcher.BeginInvoke(DispatcherPriority.Background, () => frame.Continue = false);
+        var dispatcher = Dispatcher.CurrentDispatcher;
+        var op = dispatcher.BeginInvoke(DispatcherPriority.Background, () => frame.Continue = false);
+        // Bounded: a starved Background queue (busy machine) must not hang the test.
+        var timer = new DispatcherTimer(TimeSpan.FromSeconds(10), DispatcherPriority.Send, (s, _) => { ((DispatcherTimer)s!).Stop(); frame.Continue = false; }, dispatcher);
         Dispatcher.PushFrame(frame);
+        timer.Stop();
+        op.Abort();
     }
 
     private static DbMetadata Md() => new()
@@ -129,9 +135,9 @@ public class SqlCompletionTests(ITestOutputHelper output)
 
         public string TextWithCaret => Editor.Text.Insert(Editor.TextArea.Caret.Offset, "|");
 
-        public List<string> Shown => Completion.Window?.CompletionList.CompletionData.Select(d => ((SqlCompletionData)d).Item.Display).ToList() ?? [];
+        public List<string> Shown => Completion.Items.Select(d => d.Item.Display).ToList();
 
-        public string? Selected => (Completion.Window?.CompletionList.SelectedItem as SqlCompletionData)?.Item.Display;
+        public string? Selected => Completion.SelectedItem?.Item.Display;
 
         public void Dispose()
         {
@@ -271,6 +277,143 @@ public class SqlCompletionTests(ITestOutputHelper output)
         });
     }
 
+    private static DbMetadata Many(int n) => new()
+    {
+        SearchPath = ["public"],
+        Schemas = [new SchemaInfo { Name = "public", IsLoaded = true, Tables = [.. Enumerable.Range(0, n).Select(i => new TableInfo { Schema = "public", Name = $"t{i:D2}" })] }],
+    };
+
+    private static void Click(System.Windows.Controls.ListBoxItem item, int clickCount)
+    {
+        var args = new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left) { RoutedEvent = UIElement.PreviewMouseDownEvent };   // the input system's event; UIElement re-raises it as (Preview)MouseLeftButtonDown along the route
+        typeof(MouseButtonEventArgs).GetProperty(nameof(MouseButtonEventArgs.ClickCount))!.SetValue(args, clickCount);
+        item.RaiseEvent(args);
+        DoEvents();
+    }
+
+    [Fact]
+    public void Popup_lives_in_the_editor_window_navigates_and_closes()
+    {
+        RunSta(() =>
+        {
+            using var h = new Harness(Many(40));
+
+            // In the editor's own window (adorner layer): no extra top-level window, and below the caret line.
+            h.SetText("SELECT * FROM |");
+            h.Type("t");
+            var popup = h.Completion.Popup!;
+            Assert.Same(h.Window, Window.GetWindow(popup));
+            Assert.Single(PresentationSource.CurrentSources.OfType<System.Windows.Interop.HwndSource>(), s => s.Dispatcher == h.Window.Dispatcher && s.RootVisual is Window { IsVisible: true });   // this thread's (tests run in parallel)
+            Assert.True(popup.TranslatePoint(default, h.Editor.TextArea).Y >= h.Editor.TextArea.TextView.DefaultLineHeight - 1);
+            Assert.False(popup.IsKeyboardFocusWithin);
+
+            // Arrow keys stop at the ends; PageDown / PageUp page; Home / End jump.
+            Assert.Equal(0, popup.SelectedIndex);
+            h.Key(Key.Up);
+            Assert.Equal(0, popup.SelectedIndex);
+            h.Key(Key.Down);
+            h.Key(Key.Down);
+            Assert.Equal(2, popup.SelectedIndex);
+            h.Key(Key.PageDown);
+            Assert.True(popup.SelectedIndex > 2);
+            h.Key(Key.End);
+            Assert.Equal(h.Shown.Count - 1, popup.SelectedIndex);
+            h.Key(Key.Down);
+            Assert.Equal(h.Shown.Count - 1, popup.SelectedIndex);
+            h.Key(Key.PageUp);
+            Assert.True(popup.SelectedIndex < h.Shown.Count - 1);
+            h.Key(Key.Home);
+            Assert.Equal(0, popup.SelectedIndex);
+            Assert.Equal("SELECT * FROM t|", h.TextWithCaret);   // the editor never saw those keys
+
+            // Rows read as their item to UI Automation (not a type name).
+            var peer = UIElementAutomationPeer.CreatePeerForElement(popup.List);
+            var names = peer.GetChildren().Select(c => c.GetName()).ToList();
+            Assert.NotEmpty(names);
+            Assert.All(names, n => Assert.StartsWith("t", n));
+            Assert.Contains("t00, table · public", names);
+            Assert.Equal("Completions", peer.GetName());
+
+            // Click selects, double-click accepts.
+            var containers = Enumerable.Range(0, popup.Items.Count)
+                .Select(i => popup.List.ItemContainerGenerator.ContainerFromIndex(i) as System.Windows.Controls.ListBoxItem).Where(c => c is not null).ToList();
+            Click(containers[1]!, 1);
+            Assert.Equal(1, popup.SelectedIndex);
+            Assert.True(h.Completion.IsOpen);
+            Click(containers[1]!, 2);
+            Assert.False(h.Completion.IsOpen);
+            Assert.Equal("SELECT * FROM t01|", h.TextWithCaret);
+            Step();
+
+            // Moving the caret out of the word closes.
+            h.SetText("SELECT * FROM |");
+            h.Type("t0");
+            Assert.True(h.Completion.IsOpen);
+            h.Editor.TextArea.Caret.Offset = 2;
+            DoEvents();
+            Assert.False(h.Completion.IsOpen);
+
+            // Backspace over the '.' in front of the word closes.
+            h.SetText("SELECT * FROM |");
+            h.Type("public.");
+            Assert.True(h.Completion.IsOpen);
+            h.Editor.Document.Remove(h.Editor.TextArea.Caret.Offset - 1, 1);
+            DoEvents();
+            Assert.False(h.Completion.IsOpen);
+
+            // Losing keyboard focus closes.
+            h.SetText("SELECT * FROM |");
+            h.Type("t");
+            h.Editor.TextArea.RaiseEvent(new KeyboardFocusChangedEventArgs(Keyboard.PrimaryDevice, 0, h.Editor.TextArea, null) { RoutedEvent = Keyboard.LostKeyboardFocusEvent });
+            Assert.False(h.Completion.IsOpen);
+
+            // Scrolling the word out of view closes.
+            h.SetText(string.Concat(Enumerable.Repeat("\n", 200)) + "SELECT * FROM |" + string.Concat(Enumerable.Repeat("\n", 200)));
+            h.Editor.ScrollToLine(201);
+            DoEvents();
+            h.Type("t");
+            Assert.True(h.Completion.IsOpen);
+            h.Editor.ScrollToHome();
+            DoEvents();
+            Assert.False(h.Completion.IsOpen);
+
+            // Hiding the editor closes.
+            h.SetText("SELECT * FROM |");
+            h.Type("t");
+            h.Editor.Visibility = Visibility.Collapsed;
+            DoEvents();
+            Assert.False(h.Completion.IsOpen);
+            h.Editor.Visibility = Visibility.Visible;
+            DoEvents();
+
+            void Step() => h.Reset();
+        });
+    }
+
+    [Fact]
+    public void One_popup_moves_between_editors()
+    {
+        RunSta(() =>
+        {
+            using var a = new Harness(Many(5));
+            using var b = new Harness(Many(5));
+            a.SetText("SELECT * FROM |");
+            a.Type("t");
+            var popup = a.Completion.Popup!;
+            b.SetText("SELECT * FROM |");
+            b.Type("t");
+            Assert.False(a.Completion.IsOpen);
+            Assert.True(b.Completion.IsOpen);
+            Assert.Same(popup, b.Completion.Popup);
+            Assert.Same(b.Window, Window.GetWindow(popup));
+            Assert.Same(b.Completion, SqlCompletion.Active);
+            a.Key(Key.Escape);   // opening in A takes it back
+            Assert.True(a.Completion.IsOpen);
+            Assert.False(b.Completion.IsOpen);
+            Assert.Same(a.Window, Window.GetWindow(popup));
+        });
+    }
+
     [Fact]
     public void Typing_faster_than_the_dispatcher_keeps_every_character()
     {
@@ -357,9 +500,10 @@ public class SqlCompletionTests(ITestOutputHelper output)
     }
 
     /// <summary>
-    /// Per keystroke: text input + completion refresh (engine over 5k tables + popup list update) + layout. The 16 ms
-    /// budget is asserted only when no UI Automation client is listening: with one (screen reader, Power Automate…),
-    /// WPF raises cross-process automation events for every visual change and timings are not representative.
+    /// Per keystroke: text input + completion refresh (engine over 5k tables + popup list update) + layout + the queued
+    /// work after it. The 16 ms budget is asserted on UI-thread CPU time (QueryThreadCycleTime), which other processes
+    /// competing for the machine barely move; wall time is printed. Skipped as an assertion when a UI Automation client
+    /// is listening (WPF then does cross-process automation work for every visual change).
     /// </summary>
     [Fact]
     public void Keystroke_with_five_thousand_tables_is_under_a_frame()
@@ -367,39 +511,42 @@ public class SqlCompletionTests(ITestOutputHelper output)
         RunSta(() =>
         {
             using var h = new Harness(Big());
+            var cpm = Perf.CompletionPerfTests.CyclesPerMs();
             var prefixSql = string.Concat(Enumerable.Repeat("SELECT a.user_col0 FROM user_user_0 a WHERE a.log_col6 = 'x';\n", 100));
             h.SetText(prefixSql + "SELECT * FROM |");
             h.Type("us"); // warm-up (JIT, first popup)
             h.SetText(prefixSql + "|");
 
-            var times = new List<double>();
+            var wall = new List<double>();
+            var cpu = new List<double>();
             var refresh = new List<double>();
             var trace = new System.Text.StringBuilder();
             foreach (var c in "SELECT a.user_col0, b.ord FROM user_user_0 a JOIN order_user_1 b ON b.pay")
             {
+                var c0 = Perf.CompletionPerfTests.Cycles();
                 var sw = Stopwatch.StartNew();
                 h.Editor.TextArea.PerformTextInput(c.ToString());
                 h.Completion.FlushPending();
                 h.Editor.UpdateLayout();
-                h.Completion.Window?.UpdateLayout();
-                sw.Stop();
-                times.Add(sw.Elapsed.TotalMilliseconds);
-                refresh.Add(h.Completion.LastRefreshMs);
                 DoEvents();
+                sw.Stop();
+                cpu.Add((Perf.CompletionPerfTests.Cycles() - c0) / cpm);
+                wall.Add(sw.Elapsed.TotalMilliseconds);
+                refresh.Add(h.Completion.LastRefreshMs);
                 trace.Append(c).Append(h.Completion.IsOpen ? "+" : "-");
             }
             output.WriteLine(trace.ToString());
             Assert.True(h.Completion.IsOpen);
             Assert.Equal("payment_col8", h.Selected);
-            times.Sort();
-            refresh.Sort();
-            var median = times[times.Count / 2];
+            static double Median(List<double> xs) { xs.Sort(); return xs[xs.Count / 2]; }
             var automation = AutomationPeer.ListenerExists(AutomationEvents.StructureChanged) || AutomationPeer.ListenerExists(AutomationEvents.PropertyChanged);
-            output.WriteLine($"keystroke (input + completion + layout): median {median:F2} ms, p90 {times[(int)(times.Count * 0.9)]:F2} ms, max {times[^1]:F2} ms; refresh median {refresh[refresh.Count / 2]:F2} ms; UIA listeners: {automation}");
+            var cpuMedian = Median(cpu);
+            output.WriteLine($"keystroke (input + completion + layout): UI-thread CPU median {cpuMedian:F2} ms, max {cpu[^1]:F2} ms; wall median {Median(wall):F2} ms; " +
+                             $"refresh median {Median(refresh):F2} ms; UIA listeners: {automation}");
             if (automation)
                 output.WriteLine("A UI Automation client is listening: timing not asserted.");
             else
-                Assert.True(median < 16, $"median keystroke {median:F2} ms");
+                Assert.True(cpuMedian < 16, $"median keystroke UI-thread CPU {cpuMedian:F2} ms");
         });
     }
 }
