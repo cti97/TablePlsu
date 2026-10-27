@@ -186,6 +186,8 @@ public sealed class Ui
     struct MOUSEINPUT { public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
     [DllImport("user32.dll", SetLastError = true)] static extern uint SendInput(uint n, INPUT[] inputs, int size);
     [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern short VkKeyScanW(char ch);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern uint MapVirtualKeyW(uint code, uint mapType);
 
     const uint KEYUP = 0x2, UNICODE = 0x4, EXTENDED = 0x1;
 
@@ -240,6 +242,23 @@ public sealed class Ui
         foreach (var ch in text)
         {
             if (ch == '\n') { Keys("Enter", 30); continue; }
+            // Prefer the key a keyboard would send (virtual key + Shift), like a user typing; VK_PACKET unicode input
+            // goes through the text services (TSF) differently. Fall back to unicode for characters with no key.
+            var scan = VkKeyScanW(ch);
+            // Dead keys (US-International ' " ` ~ ^) would combine with the next character: send those as unicode.
+            if (scan != -1 && (scan & 0x600) == 0 && (MapVirtualKeyW((uint)(scan & 0xFF), 2) & 0x80000000) == 0)
+            {
+                var vk = (ushort)(scan & 0xFF);
+                var shift = (scan & 0x100) != 0;
+                var list = new List<INPUT>();
+                if (shift) list.Add(KeyInput(0x10, false));
+                list.Add(KeyInput(vk, false));
+                list.Add(KeyInput(vk, true));
+                if (shift) list.Add(KeyInput(0x10, true));
+                Send(list.ToArray());
+                if (perCharMs > 0) Thread.Sleep(perCharMs);
+                continue;
+            }
             Send(new INPUT { type = 1, u = new InputUnion { ki = new KEYBDINPUT { wScan = ch, dwFlags = UNICODE } } },
                  new INPUT { type = 1, u = new InputUnion { ki = new KEYBDINPUT { wScan = ch, dwFlags = UNICODE | KEYUP } } });
             if (perCharMs > 0) Thread.Sleep(perCharMs);

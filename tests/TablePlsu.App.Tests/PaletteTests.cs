@@ -313,4 +313,30 @@ public class PaletteViewModelTests(ITestOutputHelper output)
             await cmd.ExecuteNonQueryAsync();
         }
     }
+    [Fact]
+    public async Task Open_anything_opened_before_the_metadata_refresh_still_loads_lazy_schemas()
+    {
+        // UI flow: Ctrl+P right after connect, before the first metadata refresh has listed the schemas. The palette
+        // could only load schemas it knew when it opened, so "orders" (schema sales) never showed up.
+        if (!TestPg.Available(output)) return;
+        TestApp.Init(new WorkspaceFeature(), new PaletteFeature());
+        var (profile, secrets) = TestPg.Profile();
+        var ws = new WorkspaceViewModel(profile, secrets, null, null);
+        try
+        {
+            await ws.ConnectAsync();
+            await ws.Metadata.RefreshAsync();
+            ws.Metadata.Clear();                     // as before the first refresh: no schemas known yet
+            using var vm = new PaletteViewModel(PaletteMode.Anything, ws, null);
+            vm.Text = "orders";
+            await ws.Metadata.RefreshAsync();        // lists sales (not loaded: lazy mode)
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            while (DateTime.UtcNow < deadline && !vm.Rows.Any(r => r.Item.Title == "orders")) await Task.Delay(50);
+            Assert.Contains(vm.Rows, r => r.Item.Title == "orders");
+        }
+        finally
+        {
+            await ws.CloseAsync();
+        }
+    }
 }

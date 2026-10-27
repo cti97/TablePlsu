@@ -53,12 +53,21 @@ public sealed partial class Flows
 
     void Launch()
     {
-        var psi = new ProcessStartInfo(_exe) { UseShellExecute = false };
-        psi.Environment["TABLEPLSU_ROOT"] = _root;
-        var proc = Process.Start(psi)!;
-        _ui = new Ui(proc);
-        _main = WaitFor(() => U.MainWindows().FirstOrDefault(), 15000)
-                ?? throw new FlowFailed($"main window did not appear (exited: {proc.HasExited}; hwnd {Refreshed(proc).MainWindowHandle} '{proc.MainWindowTitle}' responding {proc.Responding}; windows: {string.Join(", ", U.Windows().Select(w => Safe(() => w.Current.AutomationId) + "/" + Name(w)))})");
+        // On a busy shared desktop a new WPF process sometimes stalls before its first window (render-thread start);
+        // give it time, then retry once with a fresh process.
+        for (var attempt = 1; ; attempt++)
+        {
+            var psi = new ProcessStartInfo(_exe) { UseShellExecute = false };
+            psi.Environment["TABLEPLSU_ROOT"] = _root;
+            var proc = Process.Start(psi)!;
+            _ui = new Ui(proc);
+            _main = WaitFor(() => U.MainWindows().FirstOrDefault(), 45000);
+            if (_main != null) break;
+            var detail = $"exited: {proc.HasExited}; hwnd {Refreshed(proc).MainWindowHandle} '{proc.MainWindowTitle}'";
+            if (!proc.HasExited) proc.Kill();
+            if (attempt == 2) throw new FlowFailed("main window did not appear (" + detail + ")");
+            Console.WriteLine("  (main window did not appear in 45 s; relaunching)");
+        }
         Activate(Main);
     }
 
@@ -163,6 +172,63 @@ public sealed partial class Flows
         ConnectFromList();
         Activate(Main);
         Thread.Sleep(int.Parse(Environment.GetEnvironmentVariable("PROBE_WAIT") ?? "0"));
+        if (what == "typing2")
+        {
+            U.Keys("Ctrl+T");
+            Thread.Sleep(1500);
+            for (int round = 0; round < 4; round++)
+            {
+                var ed = FirstVisible(Main, Id("Editor"))!;
+                Click(ed);
+                U.Keys("Ctrl+A Delete");
+                U.Type("select * from sales.ord", 30);
+                WaitTrue(() => OtherWindow(w => First(w, Id("PART_ListBox")) != null) != null, 3000);
+                U.Keys("Enter");
+                Thread.Sleep(500);
+                if (OtherWindow(w => First(w, Id("PART_ListBox")) != null) != null) U.Keys("Esc");
+                Console.WriteLine($"round {round} accepted: '{Value(ed)}'");
+                Click(ed);
+                U.Keys("Ctrl+A Delete");
+                const string sql = "select 1 as a; select 2 as b; select 3 as c";
+                U.Type(sql, 4);
+                Thread.Sleep(150);
+                var popup = OtherWindow(w => First(w, Id("PART_ListBox")) != null) != null;
+                if (popup) U.Keys("Esc");
+                WaitTrue(() => Value(ed).Length >= sql.Length, 5000);
+                Thread.Sleep(500);
+                Console.WriteLine($"round {round} popup-at-end={popup}: '{Value(ed)}' {(Value(ed) == sql ? "OK" : "CORRUPT")}");
+            }
+            return;
+        }
+        if (what == "typing")
+        {
+            U.Keys("Ctrl+T");
+            Thread.Sleep(1500);
+            foreach (var delay in new[] { 4, 4, 4, 30, 30, 0, 0 })
+            {
+                var ed = FirstVisible(Main, Id("Editor"))!;
+                Click(ed);
+                U.Keys("Ctrl+A Delete");
+                const string sql = "select 1 as a; select 2 as b; select 3 as c";
+                var sw = Stopwatch.StartNew();
+                U.Type(sql, delay);
+                var typed = sw.ElapsedMilliseconds;
+                var caught = WaitTrue(() => Value(ed).Length >= sql.Length, 10000);
+                Console.WriteLine($"delay {delay}: typed in {typed} ms, caught up {caught} at {sw.ElapsedMilliseconds} ms: '{Value(ed)}' popup={OtherWindow(w => First(w, Id("PART_ListBox")) != null) != null}");
+                U.Keys("Esc");
+            }
+            return;
+        }
+        if (what == "orders")
+        {
+            var sw0 = Stopwatch.StartNew();
+            U.Keys("Ctrl+P");
+            var p0 = WaitFor(() => OtherWindow(w => First(w, Id("Input")) != null), 5000)!;
+            U.Type("orders", 20);
+            var found = WaitTrue(() => All(p0, Type(ControlType.ListItem)).Count > 0, 30000);
+            Console.WriteLine($"orders found={found} after {sw0.ElapsedMilliseconds} ms; status '{Name(First(p0, Id("Status")))}'");
+            return;
+        }
         U.Keys(what == "db" ? "Ctrl+K" : "Ctrl+P");
         var pal = WaitFor(() => OtherWindow(w => First(w, Id("Input")) != null), 3000)!;
         foreach (var q in new[] { "", "orders", "customers", "sales" })

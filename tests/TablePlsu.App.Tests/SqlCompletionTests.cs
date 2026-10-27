@@ -272,6 +272,30 @@ public class SqlCompletionTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void Typing_faster_than_the_dispatcher_keeps_every_character()
+    {
+        // Keystrokes that arrive faster than the completion refresh (a lagging dispatcher) must all land, in order.
+        RunSta(() =>
+        {
+            using var h = new Harness(Md());
+            const string sql = "select 1 as a; select 2 as b; select 3 as c";
+            foreach (var chunk in new[] { 1, 2, 3, 5, 8, 100 })
+            {
+                h.Reset();
+                for (var i = 0; i < sql.Length; i++)
+                {
+                    h.Editor.TextArea.PerformTextInput(sql[i].ToString());
+                    if ((i + 1) % chunk == 0) DoEvents();
+                }
+                DoEvents();
+                h.Key(Key.Escape);
+                Assert.Equal(sql, h.Editor.Text);
+            }
+
+        });
+    }
+
+    [Fact]
     public void Auto_close_pairs()
     {
         RunSta(() =>

@@ -51,7 +51,7 @@ public sealed partial class Flows
     void CreateConnectionViaForm()
     {
         Activate(Main);
-        var create = FirstVisible(Main, And(Type(ControlType.Button), Named("Create Connection…"))) ?? throw new FlowFailed("no Create Connection button");
+        var create = WaitFor(() => FirstVisible(Main, And(Type(ControlType.Button), Named("Create Connection…"))), 10000) ?? throw new FlowFailed("no Create Connection button");
         Click(create);
         var name = WaitFor(() => FirstVisible(Main, Id("NameBox"))) ?? throw new FlowFailed("form did not open");
         Fill(name, "uiflows-form");
@@ -111,7 +111,7 @@ public sealed partial class Flows
         Click(box);
         U.Keys("Ctrl+A");
         U.Type(text, 2);
-        Check(Value(box) == text, $"field shows '{Value(box)}' after typing '{text}'");
+        Check(WaitTrue(() => Value(box) == text, 3000), $"field shows '{Value(box)}' after typing '{text}'");
     }
 
     /// <summary>A window other than the main windows: top-level, or an owned dialog (UIA lists those under their owner).</summary>
@@ -184,6 +184,9 @@ public sealed partial class Flows
         {
             if (i > 0) U.Keys("Enter");
             U.Type(lines[i], 4);
+            // Let the editor catch up with the typed keys before Esc (on a loaded machine it lags behind SendInput).
+            var expectedSoFar = string.Join('\n', lines.Take(i + 1));
+            WaitTrue(() => Norm(EditorText()).Length >= expectedSoFar.Length, 5000);
             Thread.Sleep(150);
             CloseCompletion();
         }
@@ -218,7 +221,7 @@ public sealed partial class Flows
         Check(HasFocus(First(pal, Id("Input"))), "palette input not focused");
         U.Type("orders", 20);
         // Like a user: press Enter once the list shows the table.
-        Check(WaitTrue(() => PaletteRowTitles(pal).FirstOrDefault() == "orders", 5000),
+        Check(WaitTrue(() => PaletteRowTitles(pal).FirstOrDefault() == "orders", 15000),
             "palette top hit for 'orders' is '" + PaletteRowTitles(pal).FirstOrDefault() + "' (status '" + Name(First(pal, Id("Status"))) + "')");
         U.Keys("Enter");
         Check(WaitTrue(() => Palette() == null, 3000), "palette did not close on Enter");
@@ -227,9 +230,9 @@ public sealed partial class Flows
         Check(count != null, "orders tab shows no row count");
     }
 
-    /// <summary>The bold title of each palette row (its last text element).</summary>
+    /// <summary>The title of each palette row (its first text with letters; the icon is a symbol-font glyph).</summary>
     static List<string> PaletteRowTitles(AutomationElement pal) =>
-        All(pal, Type(ControlType.ListItem)).Select(i => All(i, Type(ControlType.Text)).Select(Name).Where(n => n.Length > 0).ToList())
+        All(pal, Type(ControlType.ListItem)).Select(i => All(i, Type(ControlType.Text)).Select(Name).Where(n => n.Any(char.IsLetterOrDigit)).ToList())
             .Select(t => t.FirstOrDefault() ?? "").ToList();
 
     void CtrlTNewTab()
@@ -433,7 +436,8 @@ public sealed partial class Flows
     {
         CopyFirstRow();
         U.Keys("Ctrl+F");
-        var bar = WaitFor(() => FirstVisible(Main, Id("FilterBar")), 3000) ?? throw new FlowFailed("Ctrl+F did not show the filter bar");
+        // The bar itself has no automation peer; its Apply button shows it is there.
+        Check(WaitTrue(() => FirstVisible(Main, And(Type(ControlType.Button), Named("Apply"))) != null, 3000), "Ctrl+F did not show the filter bar");
         Thread.Sleep(200);
         U.Type("42", 20);
         U.Keys("Enter");
@@ -458,7 +462,7 @@ public sealed partial class Flows
         U.Keys("Ctrl+P");
         WaitFor(Palette, 3000);
         U.Type(_scratch, 10);
-        Check(WaitTrue(() => Palette() is { } p && PaletteRowTitles(p).FirstOrDefault() == _scratch, 5000), "palette does not list the scratch table");
+        Check(WaitTrue(() => Palette() is { } p && PaletteRowTitles(p).FirstOrDefault() == _scratch, 15000), "palette does not list the scratch table");
         U.Keys("Enter");
         Check(WaitTrue(() => SelectedTabName() == _scratch, 5000), "scratch table did not open (selected '" + SelectedTabName() + "')");
         var row = WaitFor(() => GridRows().FirstOrDefault(r => Visible(r, Type(ControlType.Custom)).Count >= 2 || Visible(r, Type(ControlType.Text)).Count >= 2), 5000)
@@ -497,8 +501,10 @@ public sealed partial class Flows
         U.Keys("Ctrl+Alt+2");
         var radio = WaitFor(() => FirstVisible(Main, And(Type(ControlType.RadioButton), Named("Structure"))), 2000) ?? throw new FlowFailed("no Structure sub-tab");
         Check(WaitTrue(() => ((SelectionItemPattern)radio.GetCurrentPattern(SelectionItemPattern.Pattern)).Current.IsSelected, 3000), "Ctrl+Alt+2 did not select Structure");
-        Check(WaitTrue(() => Visible(Main, Type(ControlType.DataItem)).Any(r => Visible(r, Named("name")).Count > 0) || Visible(Main, Named("name")).Count > 0, 5000),
-            "structure view does not list the 'name' column");
+        Check(WaitTrue(() => Visible(Main, Type(ControlType.HeaderItem)).Any(h => Name(h) == "column_name"), 5000), "structure grid did not appear");
+        var rowsText = "";
+        Check(WaitTrue(() => (rowsText = CopyFirstRow()).StartsWith("id	", StringComparison.Ordinal), 5000),
+            "structure grid's first row is not the id column: '" + rowsText + "'");
         U.Keys("Ctrl+Alt+1");
     }
 

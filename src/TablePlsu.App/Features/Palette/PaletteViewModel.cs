@@ -160,20 +160,27 @@ public sealed partial class PaletteViewModel : ObservableObject, IDisposable
                 UiDispatch.Run(PostReload);
             }, TaskScheduler.Default);
         }
-        if (Mode == PaletteMode.Anything)
+        if (Mode == PaletteMode.Anything) LoadLazySchemas(ws);
+    }
+
+    /// <summary>Lazy schemas: the palette searches every schema, so load the ones the sidebar has not loaded yet.</summary>
+    private void LoadLazySchemas(IWorkspace ws)
+    {
+        if (_disposed || ws.State != DbSessionState.Connected) return;
+        foreach (var s in ws.Metadata.Current.Schemas.Where(s => !s.IsLoaded).Select(s => s.Name).ToList())
         {
-            // Lazy schemas: the palette searches every schema, so load the ones the sidebar has not loaded yet.
-            foreach (var s in ws.Metadata.Current.Schemas.Where(s => !s.IsLoaded).Select(s => s.Name).ToList())
-            {
-                try { ws.Metadata.EnsureSchemaLoadedAsync(s).Forget(); }
-                catch (Exception ex) when (ex is ObjectDisposedException or InvalidOperationException) { break; }
-            }
+            try { ws.Metadata.EnsureSchemaLoadedAsync(s).Forget(); }
+            catch (Exception ex) when (ex is ObjectDisposedException or InvalidOperationException) { break; }
         }
     }
 
     private void OnMetadataChanged(object? sender, MetadataChangedEventArgs e)
     {
-        if (Mode == PaletteMode.Anything) UiDispatch.Run(PostReload);
+        if (Mode != PaletteMode.Anything) return;
+        // Opened before the first refresh (right after connect) or across a reload: schemas listed now were not known
+        // when the palette opened, so load them too (EnsureSchemaLoadedAsync is a no-op for loaded/running ones).
+        if (e.Reason is MetadataChangeReason.Refreshed or MetadataChangeReason.LoadedFromDisk && Workspace is { } ws) LoadLazySchemas(ws);
+        UiDispatch.Run(PostReload);
     }
 
     /// <summary>Coalesces bursts of change events (one per lazily loaded schema) into one reload.</summary>
