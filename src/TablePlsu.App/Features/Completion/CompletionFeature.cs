@@ -15,6 +15,7 @@ public sealed class CompletionFeature : IFeature
 {
     public void Register(FeatureContext ctx)
     {
+        SqlEditor.SqlEditorHooks.AttachCompletion = (editor, ws) => SqlCompletion.Attach(editor, ws);
         ctx.Commands.Register(CommandIds.WindowNew, _ => SqlCompletion.Active!.MoveSelection(1), PopupOwnsKeys);
         ctx.Commands.Register(CommandIds.PaletteOpenAnything, _ => SqlCompletion.Active!.MoveSelection(-1), PopupOwnsKeys);
     }

@@ -574,10 +574,12 @@ public class TableTabViewUiTests(ITestOutputHelper output)
                         Assert.Equal("41–50", vm.PageText);
                         Assert.False(vm.CanNextPage);
 
-                        // Bottom tabs: a placeholder when nothing is registered for Structure.
+                        // Bottom tabs: a placeholder when nothing is registered for Structure (the Structure feature
+                        // registers one when it is loaded in the same test process).
                         Assert.True(vm.TryExecuteCommand(CommandIds.TableShowStructure, new CommandContext { CommandId = CommandIds.TableShowStructure }));
                         Assert.Equal(TableSubView.Structure, vm.SelectedSubView);
-                        Assert.IsType<TextBlock>(vm.SubViewContent);
+                        if (TableSubViewRegistry.IsRegistered(TableSubViewRegistry.Structure)) Assert.IsNotType<TextBlock>(vm.SubViewContent);
+                        else Assert.IsType<TextBlock>(vm.SubViewContent);
                         await Until(() => view.Grid.Visibility == Visibility.Collapsed);
                     }
                     finally

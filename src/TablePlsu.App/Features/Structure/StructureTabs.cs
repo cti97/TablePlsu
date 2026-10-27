@@ -208,6 +208,8 @@ public sealed class FunctionTabViewModel : TabViewModelBase
         null => true,
         uint oid => f.Oid == oid,
         int oid => f.Oid == (uint)oid,
+        // The sidebar passes the FunctionInfo of the clicked overload.
+        FunctionInfo fi => fi.Oid != 0 ? f.Oid == fi.Oid : string.Equals(fi.Arguments, f.Arguments, StringComparison.Ordinal),
         string s => string.Equals(s, f.Arguments, StringComparison.Ordinal) || string.Equals(s, f.Signature, StringComparison.Ordinal),
         _ => false,
     };

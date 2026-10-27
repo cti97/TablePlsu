@@ -60,6 +60,7 @@ public class SqlEditorViewTests
             tab.Document.Text = "select 1;\nselect 2;";
             var view = (SqlEditorView)tab.CreateView();
             var window = Host(view);
+            var previousHook = SqlEditorHooks.AttachCompletion;
             try
             {
                 Assert.Same(tab.Document, view.TextEditor.Document);
@@ -95,14 +96,14 @@ public class SqlEditorViewTests
 
                 // The completion hook is invoked once per view.
                 var calls = 0;
-                SqlEditorHooks.AttachCompletion = (_, w) => { if (ReferenceEquals(w, ws)) calls++; };
+                SqlEditorHooks.AttachCompletion = (_, w) => { if (ReferenceEquals(w, ws)) calls++; return null; };
                 var tab2 = (SqlEditorTabViewModel)ws.NewTab();
                 _ = tab2.CreateView();
                 Assert.Equal(1, calls);
             }
             finally
             {
-                SqlEditorHooks.AttachCompletion = null;
+                SqlEditorHooks.AttachCompletion = previousHook;
                 window.Close();
                 ws.CloseAsync().Wait();
             }

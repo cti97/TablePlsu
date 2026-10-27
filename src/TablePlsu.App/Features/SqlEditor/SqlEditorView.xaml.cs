@@ -30,6 +30,7 @@ public partial class SqlEditorView : UserControl, ISqlEditorView
     private SqlEditorTabViewModel? _vm;
     private bool _restored;
     private bool _completionAttached;
+    private IDisposable? _completion;
     private bool _highlightCurrent = true;
     private GridLength _resultsHeight = new(1, GridUnitType.Star);
     private DispatcherTimer? _zoomPersistTimer;
@@ -149,7 +150,7 @@ public partial class SqlEditorView : UserControl, ISqlEditorView
         _completionAttached = true;
         try
         {
-            SqlEditorHooks.AttachCompletion?.Invoke(Editor, workspace);
+            _completion = SqlEditorHooks.AttachCompletion?.Invoke(Editor, workspace);
         }
         catch (Exception ex)
         {
@@ -224,6 +225,8 @@ public partial class SqlEditorView : UserControl, ISqlEditorView
         }
         _zoomPersistTimer?.Stop();
         PersistZoom();
+        _completion?.Dispose();
+        _completion = null;
     }
 
     // ---- settings and theme -------------------------------------------------------------------------------------

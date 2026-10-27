@@ -69,7 +69,15 @@ public static class SidebarActions
     public static TabViewModelBase? OpenStructure(IWorkspace ws, SidebarItemRef item)
     {
         if (RequestFor(item, pinned: true, newTab: false, ws.Metadata.Current) is not { } request) return null;
-        var tab = ws.OpenTab(request with { Parameter = StructureParameter });
+        // Tables open the Structure feature's "structure" tab, views/matviews its "viewDdl" tab; functions already
+        // open their definition editor.
+        request = item.ObjectKind switch
+        {
+            ObjectKinds.Table => request with { Kind = TabKinds.Structure, Parameter = StructureParameter },
+            ObjectKinds.View or ObjectKinds.MaterializedView => request with { Kind = Structure.StructureTabKinds.ViewDdl, Parameter = null },
+            _ => request,
+        };
+        var tab = ws.OpenTab(request);
         if (tab is null) ws.Log($"Nothing can open a '{request.Kind}' structure tab yet.");
         return tab;
     }

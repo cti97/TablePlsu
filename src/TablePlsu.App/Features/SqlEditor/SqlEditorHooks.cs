@@ -11,6 +11,7 @@ namespace TablePlsu.App.Features.SqlEditor;
 /// </summary>
 public static class SqlEditorHooks
 {
-    /// <summary>Called once per editor view, after the editor is set up: <c>(editor, workspace)</c>.</summary>
-    public static Action<TextEditor, IWorkspace>? AttachCompletion { get; set; }
+    /// <summary>Called once per editor view, after the editor is set up: <c>(editor, workspace)</c>. The returned
+    /// handle (if any) is disposed when the tab closes. <c>CompletionFeature</c> sets it to <c>SqlCompletion.Attach</c>.</summary>
+    public static Func<TextEditor, IWorkspace, IDisposable?>? AttachCompletion { get; set; }
 }

@@ -17,5 +17,10 @@ public sealed class StructureFeature : IFeature
         ctx.Tabs.Register(StructureTabKinds.ViewDdl, r => new ViewDdlTabViewModel(r));
         ctx.Tabs.Register(TabKinds.Function, r => new FunctionTabViewModel(r));
         ctx.Tabs.Register(TabKinds.CreateTable, r => new CreateTableTabViewModel(r));
+
+        // Bottom tabs of the TableData table tab (Ctrl+Alt+2 / Ctrl+Alt+3).
+        TableData.TableSubViewRegistry.Register(TableData.TableSubViewRegistry.Structure, StructureViews.CreateStructure);
+        TableData.TableSubViewRegistry.Register(TableData.TableSubViewRegistry.Indexes, StructureViews.CreateIndexes);
+        TableData.TableSubViewRegistry.Register(TableData.TableSubViewRegistry.Ddl, StructureViews.CreateViewDdl);
     }
 }

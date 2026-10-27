@@ -58,6 +58,11 @@ try {
     $title = ""
     for ($i = 0; $i -lt 50 -and -not $ok; $i++) {
         Start-Sleep -Milliseconds 200
+        # The first Enter can be lost when the window has not taken the foreground yet; resend once.
+        if ($i -eq 20 -and $proc.MainWindowTitle -eq "TablePlsu") {
+            $window.SetFocus(); try { $listItem.SetFocus() } catch { }
+            [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+        }
         $proc.Refresh()
         $title = $proc.MainWindowTitle
         $status = $window.FindFirst($tree::Descendants, (New-Object System.Windows.Automation.PropertyCondition($ae::AutomationIdProperty, "ConnectionStatus")))
@@ -69,12 +74,60 @@ try {
     }
     Write-Output "workspace: $title - status $($status.Current.Name)"
 
-    # Ctrl+T opens a tab (an empty tab until the SQL editor feature registers its factory).
+    function Wait-For([scriptblock]$probe, [int]$tries = 50) {
+        for ($i = 0; $i -lt $tries; $i++) { $r = & $probe; if ($r) { return $r }; Start-Sleep -Milliseconds 200 }
+        return $null
+    }
+    function Id($id) { New-Object System.Windows.Automation.PropertyCondition($ae::AutomationIdProperty, $id) }
+    function Named($name) { New-Object System.Windows.Automation.PropertyCondition($ae::NameProperty, $name) }
+
+    # Ctrl+T opens a SQL editor tab.
+    $before = $window.FindAll($tree::Descendants, (Id "RunButton")).Count
+    $window.SetFocus()
     [System.Windows.Forms.SendKeys]::SendWait("^t")
+    $runButton = Wait-For { $all = $window.FindAll($tree::Descendants, (Id "RunButton")); if ($all.Count -gt $before -or ($before -eq 0 -and $all.Count -gt 0)) { $all[$all.Count - 1] } }
+    if (-not $runButton) { throw "Ctrl+T did not open a SQL editor tab." }
+    Write-Output "Ctrl+T opened a SQL editor tab"
+
+    # Type a query and run it with Ctrl+Enter; the result bar must report rows.
+    $textArea = $window.FindFirst($tree::Descendants, (New-Object System.Windows.Automation.PropertyCondition($ae::ClassNameProperty, "TextArea")))
+    if ($textArea) { try { $textArea.SetFocus() } catch { } }
+    Start-Sleep -Milliseconds 300
+    [System.Windows.Forms.SendKeys]::SendWait("select {*} from sales.orders")
     Start-Sleep -Milliseconds 500
-    $tab = $window.FindFirst($tree::Descendants, (New-Object System.Windows.Automation.PropertyCondition($ae::NameProperty, "New Tab")))
-    if (-not $tab) { throw "Ctrl+T did not open a tab." }
-    Write-Output "Ctrl+T opened: New Tab"
+    # Close the autocomplete popup if it is open (it is a separate top-level window of the process).
+    $popupCond = New-Object System.Windows.Automation.AndCondition(
+        (New-Object System.Windows.Automation.PropertyCondition($ae::ProcessIdProperty, $proc.Id)),
+        (New-Object System.Windows.Automation.NotCondition((Id "MainWindow"))))
+    if ($ae::RootElement.FindFirst($tree::Children, $popupCond)) { [System.Windows.Forms.SendKeys]::SendWait("{ESC}"); Start-Sleep -Milliseconds 200 }
+    [System.Windows.Forms.SendKeys]::SendWait("^{ENTER}")
+    $summary = Wait-For { $s = $window.FindFirst($tree::Descendants, (Id "ResultSummary")); if ($s -and $s.Current.Name -match '^[1-9][\d,.]* rows?') { $s } } 75
+    if (-not $summary) {
+        $s = $window.FindFirst($tree::Descendants, (Id "ResultSummary"))
+        throw "Ctrl+Enter did not show rows for sales.orders (result bar: '$(if ($s) { $s.Current.Name })')."
+    }
+    Write-Output "query result: $($summary.Current.Name)"
+
+    # Open public.customers from the sidebar: search, select the exact row, Enter.
+    $search = Wait-For { $window.FindFirst($tree::Descendants, (Id "ItemsSearch")) }
+    if (-not $search) { throw "Sidebar search box not found." }
+    $search.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue("customers")
+    $row = Wait-For {
+        $texts = $window.FindAll($tree::Descendants, (Named "customers"))
+        foreach ($t in $texts) {
+            if ($t.Current.AutomationId -ne "ItemText") { continue }
+            $p = [System.Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($t)
+            while ($p -and $p.Current.ControlType -ne [System.Windows.Automation.ControlType]::ListItem) { $p = [System.Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($p) }
+            if ($p) { return $p }
+        }
+    }
+    if (-not $row) { throw "Sidebar did not list 'customers'." }
+    $row.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+    $search.SetFocus()
+    [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+    $count = Wait-For { $c = $window.FindFirst($tree::Descendants, (Id "RowCountButton")); if ($c -and $c.Current.Name -match 'rows') { $c } } 75
+    if (-not $count) { throw "Opening public.customers from the sidebar did not show a table tab with a row count." }
+    Write-Output "sidebar opened customers: $($count.Current.Name)"
     Write-Output "SMOKE OK"
 }
 finally {
