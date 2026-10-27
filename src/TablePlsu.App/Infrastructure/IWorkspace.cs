@@ -2,6 +2,7 @@ using TablePlsu.App.Features.Workspace;
 using TablePlsu.Core.Connections;
 using TablePlsu.Core.Db;
 using TablePlsu.Core.History;
+using TablePlsu.Core.Metadata;
 
 namespace TablePlsu.App.Infrastructure;
 
@@ -20,6 +21,13 @@ public interface IWorkspace
 
     /// <summary>The DB session. Exists from construction; it may not be connected yet (see <see cref="State"/>).</summary>
     DbSession Session { get; }
+
+    /// <summary>
+    /// Schema metadata for this connection + database. Created with the workspace; the disk cache loads immediately and a
+    /// server refresh runs after each (re)connect and on Ctrl+R. <see cref="MetadataCache.Changed"/> fires on a background
+    /// thread (marshal with <see cref="UiDispatch"/>).
+    /// </summary>
+    MetadataCache Metadata { get; }
 
     /// <summary>Connection state, mirrored on the UI thread.</summary>
     DbSessionState State { get; }

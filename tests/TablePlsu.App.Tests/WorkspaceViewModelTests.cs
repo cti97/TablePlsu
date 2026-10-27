@@ -313,6 +313,31 @@ public class WorkspaceConnectionIntegrationTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task Connect_refreshes_metadata_cache_and_writes_it_to_disk()
+    {
+        if (!TestPg.Available(output)) return;
+        TestApp.Init();
+        var (profile, secrets) = TestPg.Profile();
+        var ws = new WorkspaceViewModel(profile, secrets, null, null);
+        var refreshed = new TaskCompletionSource();
+        ws.Metadata.Changed += (_, e) => { if (e.Reason == TablePlsu.Core.Metadata.MetadataChangeReason.Refreshed) refreshed.TrySetResult(); };
+        try
+        {
+            await ws.ConnectAsync();
+            await refreshed.Task.WaitAsync(TimeSpan.FromSeconds(20));
+            Assert.NotNull(ws.Metadata.FindTable(null, "customers"));
+            for (var i = 0; i < 50 && !System.IO.File.Exists(ws.Metadata.CacheFile); i++) await Task.Delay(50); // saved right after Changed
+            Assert.True(System.IO.File.Exists(ws.Metadata.CacheFile));
+            IWorkspace iws = ws;
+            Assert.Same(ws.Metadata, iws.Metadata);
+        }
+        finally
+        {
+            await ws.CloseAsync();
+        }
+    }
+
+    [Fact]
     public async Task Bad_password_marks_workspace_broken_with_error()
     {
         if (!TestPg.Available(output)) return;

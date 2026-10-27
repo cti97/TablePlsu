@@ -9,6 +9,8 @@ using TablePlsu.Core.Commands;
 using TablePlsu.Core.Connections;
 using TablePlsu.Core.Db;
 using TablePlsu.Core.History;
+using TablePlsu.Core.Metadata;
+using TablePlsu.Core.Paths;
 using TablePlsu.Core.Settings;
 
 namespace TablePlsu.App.Features.Workspace;
@@ -56,6 +58,9 @@ public sealed partial class WorkspaceViewModel : ObservableObject, IWorkspace, I
         });
         Session.StateChanged += OnSessionStateChanged;
         Session.Log += OnSessionLog;
+        Metadata = new MetadataCache(profile.Id, Database, Session, AppServices.IsInitialized ? AppServices.Paths : AppPaths.Current,
+            new MetadataCacheOptions { IncludeSystemSchemas = settings.Sidebar.LoadSystemSchemas, LazySchemas = settings.Sidebar.LazyLoadSchemas });
+        Metadata.LoadCachedAsync().Forget();
         Tabs = new ReadOnlyObservableCollection<TabViewModelBase>(_tabs);
         _tabs.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasTabs));
 
@@ -78,6 +83,8 @@ public sealed partial class WorkspaceViewModel : ObservableObject, IWorkspace, I
     public DbSession Session { get; }
 
     public HistoryStore History => AppServices.History;
+
+    public MetadataCache Metadata { get; }
 
     public ISafeModeGate SafeMode { get; }
 
@@ -443,6 +450,7 @@ public sealed partial class WorkspaceViewModel : ObservableObject, IWorkspace, I
             if (reconnect) await Session.ReconnectAsync(ct).ConfigureAwait(false);
             else await Session.ConnectAsync(ct).ConfigureAwait(false);
             Log($"Connected. {Session.ServerVersion}");
+            _ = RefreshMetadata();
         }
         catch (OperationCanceledException)
         {
@@ -452,6 +460,22 @@ public sealed partial class WorkspaceViewModel : ObservableObject, IWorkspace, I
             Log("Connection failed: " + ex.Message, ConsoleEntryKind.Error);
             UiDispatch.Run(() => LastError = ex.Message);
         }
+    }
+
+    /// <summary>Refreshes the schema cache in the background and logs the outcome to the console.</summary>
+    public Task RefreshMetadata()
+    {
+        if (_closed) return Task.CompletedTask;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        Task<DbMetadata> refresh;
+        try { refresh = Metadata.RefreshAsync(); }
+        catch (ObjectDisposedException) { return Task.CompletedTask; }
+        return refresh.ContinueWith(t =>
+        {
+            if (t.IsCanceled) return;
+            if (t.Exception is { } ex) Log("Schema refresh failed: " + ex.GetBaseException().Message, ConsoleEntryKind.Error);
+            else Log($"Schema loaded: {t.Result.Schemas.Count} schemas, {t.Result.AllTables().Count()} tables ({sw.ElapsedMilliseconds} ms).");
+        }, TaskScheduler.Default);
     }
 
     public async Task DisconnectAsync()
@@ -465,6 +489,7 @@ public sealed partial class WorkspaceViewModel : ObservableObject, IWorkspace, I
 
     public void RequestReload()
     {
+        if (State == DbSessionState.Connected) _ = RefreshMetadata();
         ReloadRequested?.Invoke(this, EventArgs.Empty);
         ActiveTab?.Reload();
     }
@@ -497,6 +522,7 @@ public sealed partial class WorkspaceViewModel : ObservableObject, IWorkspace, I
         _tabs.Clear();
         ActiveTab = null;
         Services.Dispose();
+        Metadata.Dispose();
         Session.StateChanged -= OnSessionStateChanged;
         Session.Log -= OnSessionLog;
         return Task.Run(async () => await Session.DisposeAsync().ConfigureAwait(false));
