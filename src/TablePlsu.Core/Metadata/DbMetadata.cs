@@ -163,7 +163,7 @@ public sealed class TableInfo
     public bool IsPartition { get; init; }
     /// <summary>pg_class.reltuples; null when never analyzed/vacuumed (or for views).</summary>
     public long? EstimatedRows { get; init; }
-    /// <summary>pg_total_relation_size (heap + indexes + toast); null for views.</summary>
+    /// <summary>Catalog estimate of heap + indexes + toast size (relpages × block_size, as of the last VACUUM/ANALYZE; never stats files); null for views.</summary>
     public long? TotalBytes { get; init; }
 
     /// <summary>In attnum order.</summary>

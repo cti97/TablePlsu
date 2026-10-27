@@ -110,8 +110,12 @@ public static class MetadataLoader
     private const string RelationsSql = """
         select c.oid, c.relnamespace, c.relname, c.relkind::text, pg_get_userbyid(c.relowner), obj_description(c.oid, 'pg_class'),
                c.relispartition, c.reltuples::float8,
-               case when c.relkind in ('r','m','p','f') then pg_total_relation_size(c.oid) end
+               case when c.relkind in ('r','m','p','f') then
+                   (c.relpages::int8 + coalesce(tc.relpages, 0)
+                    + coalesce((select sum(ic.relpages) from pg_index i join pg_class ic on ic.oid = i.indexrelid where i.indrelid = c.oid), 0)
+                   ) * current_setting('block_size')::int8 end
         from pg_class c
+        left join pg_class tc on tc.oid = c.reltoastrelid
         where c.relnamespace = any($1) and c.relkind in ('r','v','m','f','p')
         """;
 

@@ -149,14 +149,19 @@ public sealed class MetadataCache : IDisposable
     public Task<DbMetadata> RefreshAsync(CancellationToken ct = default)
     {
         var session = _session ?? throw new InvalidOperationException("This MetadataCache has no DbSession.");
+        Task<DbMetadata> task;
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (_refreshTask is { IsCompleted: false } running) return running;
-            var token = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token, ct).Token;
-            _refreshTask = Task.Run(() => RefreshCoreAsync(session, token), token);
-            return _refreshTask;
+            if (_refreshTask is not { IsCompleted: false })
+            {
+                // Shared between callers: only Dispose cancels the load; each caller's token only stops its own wait.
+                var token = _cts.Token;
+                _refreshTask = Task.Run(() => RefreshCoreAsync(session, token), token);
+            }
+            task = _refreshTask;
         }
+        return ct.CanBeCanceled ? task.WaitAsync(ct) : task;
     }
 
     private async Task<DbMetadata> RefreshCoreAsync(DbSession session, CancellationToken ct)
@@ -169,6 +174,7 @@ public sealed class MetadataCache : IDisposable
             lock (_gate)
             {
                 if (_disposed) return md;
+                md = KeepSchemasLoadedMeanwhile(md, Current);
                 Volatile.Write(ref _current, md);
                 LastRefreshed = md.LoadedAt;
                 LastError = null;
@@ -186,6 +192,21 @@ public sealed class MetadataCache : IDisposable
         {
             RefreshingChanged?.Invoke(this, false);
         }
+    }
+
+    /// <summary>
+    /// Lazy mode: a schema loaded by <see cref="EnsureSchemaLoadedAsync"/> while the refresh ran (after it chose its
+    /// schema list) is carried over, so an overlapping refresh never unloads an expanded schema.
+    /// </summary>
+    private static DbMetadata KeepSchemasLoadedMeanwhile(DbMetadata fresh, DbMetadata current)
+    {
+        var result = fresh;
+        foreach (var loaded in current.Schemas)
+        {
+            if (!loaded.IsLoaded) continue;
+            if (fresh.FindSchema(loaded.Name) is { IsLoaded: false }) result = result.WithSchema(loaded);
+        }
+        return result;
     }
 
     private MetadataLoadOptions BuildLoadOptions()
@@ -207,30 +228,39 @@ public sealed class MetadataCache : IDisposable
     {
         if (!force && Current.FindSchema(schema) is { IsLoaded: true } loaded) return Task.FromResult<SchemaInfo?>(loaded);
         var session = _session ?? throw new InvalidOperationException("This MetadataCache has no DbSession.");
+        Task<SchemaInfo?> task;
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (_schemaLoads.TryGetValue(schema, out var running) && !running.IsCompleted) return running;
-            var token = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token, ct).Token;
-            var task = Task.Run(async () =>
+            if (!_schemaLoads.TryGetValue(schema, out task!) || task.IsCompleted)
             {
-                var list = await session.WithMetadataConnectionAsync((conn, c) => MetadataLoader.LoadSchemasAsync(conn, [schema], c), token).ConfigureAwait(false);
-                var info = list.FirstOrDefault();
-                if (info is null) return null;
-                DbMetadata md;
-                lock (_gate)
-                {
-                    if (_disposed) return info;
-                    md = Current.WithSchema(info);
-                    Volatile.Write(ref _current, md);
-                }
-                Changed?.Invoke(this, new MetadataChangedEventArgs(md, MetadataChangeReason.SchemaLoaded, info.Name));
-                TrySave(md);
-                return info;
-            }, token);
-            _schemaLoads[schema] = task;
-            return task;
+                task = StartSchemaLoad(session, schema);
+                _schemaLoads[schema] = task;
+            }
         }
+        // The load is shared between callers: a caller's token only stops its own wait, never the load.
+        return ct.CanBeCanceled ? task.WaitAsync(ct) : task;
+    }
+
+    private Task<SchemaInfo?> StartSchemaLoad(DbSession session, string schema)
+    {
+        var token = _cts.Token;
+        return Task.Run(async () =>
+        {
+            var list = await session.WithMetadataConnectionAsync((conn, c) => MetadataLoader.LoadSchemasAsync(conn, [schema], c), token).ConfigureAwait(false);
+            var info = list.FirstOrDefault();
+            if (info is null) return null;
+            DbMetadata md;
+            lock (_gate)
+            {
+                if (_disposed) return info;
+                md = Current.WithSchema(info);
+                Volatile.Write(ref _current, md);
+            }
+            Changed?.Invoke(this, new MetadataChangedEventArgs(md, MetadataChangeReason.SchemaLoaded, info.Name));
+            TrySave(md);
+            return info;
+        }, token);
     }
 
     private void TrySave(DbMetadata md)
