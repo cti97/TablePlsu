@@ -42,6 +42,10 @@ public class CustomisationTests
             catch (Exception ex) { error = ex; }
             finally
             {
+                // Leave no subscribers bound to this (ending) thread for the next tests.
+                AppServices.ClearSubscribersForTests();
+                GridResources.ResetForTests();
+                SettingsResources.ResetForTests();
                 GridResources.TestTarget = null;
                 SettingsResources.TestTarget = null;
                 UiDispatch.Initialize(null!);
@@ -61,6 +65,8 @@ public class CustomisationTests
     {
         AppServices.Settings.SaveUserJson(json);
         Assert.Null(AppServices.Settings.LastError);
+        // In the app ApplySettings re-applies the theme (it skips that without an Application, as in tests).
+        AppServices.Theme.Apply();
         DoEvents();
     }
 

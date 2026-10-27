@@ -119,7 +119,7 @@ public static class AppServices
 
         ApplyHistorySettings(e.Settings);
         Themes.Reload();
-        Theme.Apply();
+        if (Application.Current is not null) Theme.Apply();
 
         SettingsChanged?.Invoke(null, e);
     }
