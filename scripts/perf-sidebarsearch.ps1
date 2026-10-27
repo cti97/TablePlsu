@@ -45,7 +45,7 @@ for ($i = 0; $i -lt $Runs; $i++) {
         $file = [IO.Path]::GetTempFileName()
         $env:TABLEPLSU_PERF_OUT = $file
         Write-Host "run $n/$total $($t.Name)"
-        dotnet test $t.Dll --filter 'FullyQualifiedName~SidebarSearchPerfTests' -nologo 2>&1 | Out-Null
+        dotnet test $t.Dll --filter 'FullyQualifiedName~SidebarSearchPerfTests' 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) { Write-Warning "$($t.Name) run $n failed (exit $LASTEXITCODE)" }
         foreach ($line in Get-Content $file) {
             if ($line -notmatch '^PERF sidebarsearch (\S+) (.*)$') { continue }
