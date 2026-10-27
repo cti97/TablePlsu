@@ -1,0 +1,169 @@
+<UserControl x:Class="TablePlsu.App.Features.SqlEditor.SqlEditorView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:infra="clr-namespace:TablePlsu.App.Infrastructure"
+             xmlns:local="clr-namespace:TablePlsu.App.Features.SqlEditor"
+             xmlns:res="clr-namespace:TablePlsu.App.Features.Results"
+             xmlns:ae="http://icsharpcode.net/sharpdevelop/avalonedit"
+             infra:CommandScopes.Scope="Editor"
+             Background="{DynamicResource c.editor.background}">
+    <UserControl.Resources>
+        <Style x:Key="ResultTabItem" TargetType="ListBoxItem">
+            <Setter Property="Foreground" Value="{DynamicResource c.app.tabForeground}" />
+            <Setter Property="Padding" Value="10,4" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="Bd" Background="Transparent" BorderThickness="0,0,0,2" BorderBrush="Transparent" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource c.app.tabHover}" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource c.app.accent}" />
+                                <Setter Property="Foreground" Value="{DynamicResource c.app.tabActiveForeground}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ViewToggle" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{DynamicResource c.app.mutedForeground}" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="Margin" Value="2,0" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="Bd" CornerRadius="3" Padding="8,2" Background="Transparent">
+                            <ContentPresenter VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource c.app.hover}" />
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource c.app.hover}" />
+                                <Setter Property="Foreground" Value="{DynamicResource c.app.windowForeground}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid x:Name="Root">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" MinHeight="80" />
+            <RowDefinition x:Name="SplitterRow" Height="4" />
+            <RowDefinition x:Name="ResultsRow" Height="*" />
+        </Grid.RowDefinitions>
+
+        <DockPanel Grid.Row="0">
+            <!-- Run bar -->
+            <Border DockPanel.Dock="Top" Background="{DynamicResource c.app.toolbar}" BorderBrush="{DynamicResource c.app.border}" BorderThickness="0,0,0,1">
+                <DockPanel Margin="6,3" LastChildFill="True">
+                    <Button x:Name="RunButton" AutomationProperties.AutomationId="RunButton" Click="OnRunClick" MinWidth="70" Padding="10,2" Focusable="False"
+                            Style="{DynamicResource AccentButton}" Content="▶ Run" />
+                    <Button x:Name="RunMenuButton" Style="{DynamicResource FlatButton}" Content="▾" Padding="6,2" Margin="1,0,8,0" Click="OnRunMenuClick" ToolTip="Run options" />
+                    <ComboBox x:Name="RowLimitBox" Width="120" VerticalAlignment="Center" Focusable="False" ToolTip="Row limit (remembered per connection)"
+                              ItemsSource="{x:Static local:SqlEditorTabViewModel.RowLimitOptions}" DisplayMemberPath="Label"
+                              SelectedValuePath="Value" SelectedValue="{Binding RowLimit, Mode=TwoWay}" />
+                    <TextBlock DockPanel.Dock="Right" Text="{Binding LinkedFilePath}" Style="{DynamicResource MutedText}" VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis" MaxWidth="420" Margin="8,0,2,0" ToolTip="{Binding LinkedFilePath}" />
+                    <TextBlock Text="{Binding RunStatus}" Style="{DynamicResource MutedText}" VerticalAlignment="Center" Margin="10,0,0,0" TextTrimming="CharacterEllipsis" />
+                </DockPanel>
+            </Border>
+
+            <!-- Replace strip (Ctrl+H), shown under the run bar; the AvalonEdit search panel holds the search options. -->
+            <Border x:Name="ReplaceBar" DockPanel.Dock="Top" Visibility="Collapsed" Background="{DynamicResource c.app.toolbar}"
+                    BorderBrush="{DynamicResource c.app.border}" BorderThickness="0,0,0,1">
+                <StackPanel Orientation="Horizontal" Margin="6,3">
+                    <TextBlock Text="Find" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{DynamicResource c.app.windowForeground}" />
+                    <TextBox x:Name="FindBox" Width="200" VerticalAlignment="Center" TextChanged="OnFindBoxChanged" KeyDown="OnReplaceBarKeyDown" />
+                    <TextBlock Text="Replace with" VerticalAlignment="Center" Margin="10,0,6,0" Foreground="{DynamicResource c.app.windowForeground}" />
+                    <TextBox x:Name="ReplaceBox" Width="200" VerticalAlignment="Center" KeyDown="OnReplaceBarKeyDown" />
+                    <CheckBox x:Name="MatchCaseBox" Content="Aa" ToolTip="Match case" Margin="8,0,0,0" VerticalAlignment="Center" Focusable="False" />
+                    <CheckBox x:Name="WholeWordBox" Content="W" ToolTip="Whole words" Margin="6,0,0,0" VerticalAlignment="Center" Focusable="False" />
+                    <CheckBox x:Name="RegexBox" Content=".*" ToolTip="Regular expression" Margin="6,0,0,0" VerticalAlignment="Center" Focusable="False" />
+                    <Button Content="Find Next" Margin="8,0,0,0" Padding="8,1" Click="OnFindNextClick" />
+                    <Button Content="Replace" Margin="4,0,0,0" Padding="8,1" Click="OnReplaceClick" />
+                    <Button Content="Replace All" Margin="4,0,0,0" Padding="8,1" Click="OnReplaceAllClick" />
+                    <TextBlock x:Name="ReplaceStatus" Style="{DynamicResource MutedText}" VerticalAlignment="Center" Margin="8,0,0,0" />
+                    <Button Content="✕" Style="{DynamicResource FlatButton}" Margin="6,0,0,0" Click="OnCloseReplaceClick" ToolTip="Close (Esc)" />
+                </StackPanel>
+            </Border>
+
+            <ae:TextEditor x:Name="Editor" ShowLineNumbers="True" Padding="2,0,0,0"
+                           Background="{DynamicResource c.editor.background}"
+                           Foreground="{DynamicResource c.editor.foreground}"
+                           LineNumbersForeground="{DynamicResource c.editor.lineNumbers}"
+                           HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" />
+        </DockPanel>
+
+        <GridSplitter x:Name="ResultsSplitter" Grid.Row="1" Height="4" HorizontalAlignment="Stretch" ResizeBehavior="PreviousAndNext" />
+
+        <!-- Results -->
+        <DockPanel x:Name="ResultsPanel" Grid.Row="2" Background="{DynamicResource c.app.window}" PreviewKeyDown="OnResultsPreviewKeyDown">
+            <Border DockPanel.Dock="Top" Background="{DynamicResource c.app.tab}" BorderBrush="{DynamicResource c.app.border}" BorderThickness="0,0,0,1">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="4,0" VerticalAlignment="Center"
+                                Visibility="{Binding SelectedResult, Converter={x:Static infra:NullToVisibilityConverter.Instance}}">
+                        <RadioButton Style="{StaticResource ViewToggle}" Content="Data" GroupName="ResultView"
+                                     IsEnabled="{Binding SelectedResult.HasResultSet}"
+                                     IsChecked="{Binding SelectedResult.ShowMessages, Mode=TwoWay, Converter={x:Static infra:InverseBoolConverter.Instance}}" />
+                        <RadioButton Style="{StaticResource ViewToggle}" Content="Message" GroupName="ResultView"
+                                     IsChecked="{Binding SelectedResult.ShowMessages, Mode=TwoWay}" />
+                    </StackPanel>
+                    <ListBox x:Name="ResultTabs" ItemsSource="{Binding Results}" SelectedItem="{Binding SelectedResult, Mode=TwoWay}"
+                             ItemContainerStyle="{StaticResource ResultTabItem}" Focusable="False"
+                             ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                        <ListBox.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Horizontal" />
+                            </ItemsPanelTemplate>
+                        </ListBox.ItemsPanel>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate DataType="local:ResultTabViewModel">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="●" Foreground="{DynamicResource c.app.error}" FontSize="9" Margin="0,0,5,0" VerticalAlignment="Center"
+                                               Visibility="{Binding HasError, Converter={x:Static infra:BoolToVisibilityConverter.Instance}}" />
+                                    <TextBlock Text="{Binding Title}" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </DockPanel>
+            </Border>
+
+            <!-- Result bar -->
+            <Border DockPanel.Dock="Bottom" Background="{DynamicResource c.app.statusBar}" BorderBrush="{DynamicResource c.app.border}" BorderThickness="0,1,0,0" Padding="8,2">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Right" Text="limited by row limit" Foreground="{DynamicResource c.app.warning}" Margin="8,0,0,0"
+                               Visibility="{Binding SelectedResult.Truncated, Converter={x:Static infra:BoolToVisibilityConverter.Instance}, FallbackValue=Collapsed}"
+                               ToolTip="Fetching stopped at the row limit; more rows exist. Change the limit beside Run." />
+                    <TextBlock x:Name="ResultSummary" AutomationProperties.AutomationId="ResultSummary" Text="{Binding SelectedResult.Summary}"
+                               Foreground="{DynamicResource c.app.statusBarForeground}" />
+                </DockPanel>
+            </Border>
+
+            <Grid>
+                <res:ResultGrid x:Name="Grid" IsReadOnly="True"
+                                ResultColumns="{Binding SelectedResult.Columns}" Rows="{Binding SelectedResult.Rows}"
+                                Visibility="{Binding SelectedResult.ShowData, Converter={x:Static infra:BoolToVisibilityConverter.Instance}, FallbackValue=Collapsed}" />
+                <TextBox x:Name="MessagesBox" IsReadOnly="True" BorderThickness="0" Padding="8,6" TextWrapping="Wrap" AcceptsReturn="True"
+                         VerticalScrollBarVisibility="Auto" FontFamily="{DynamicResource MonoFont}"
+                         Background="{DynamicResource c.app.window}" Foreground="{DynamicResource c.app.windowForeground}"
+                         Text="{Binding SelectedResult.MessagesText, Mode=OneWay}"
+                         Visibility="{Binding SelectedResult.ShowMessageView, Converter={x:Static infra:BoolToVisibilityConverter.Instance}, FallbackValue=Collapsed}" />
+                <TextBlock x:Name="ResultsHint" Style="{DynamicResource MutedText}" HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center"
+                           Visibility="{Binding SelectedResult, Converter={x:Static infra:NullToVisibilityConverter.Instance}, ConverterParameter=invert}" />
+            </Grid>
+        </DockPanel>
+    </Grid>
+</UserControl>
