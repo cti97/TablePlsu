@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Threading;
 using TablePlsu.App.Infrastructure;
 using TablePlsu.App.Shell;
+using TablePlsu.Core.Startup;
 
 namespace TablePlsu.App;
 
@@ -16,6 +17,14 @@ namespace TablePlsu.App;
 public partial class App : Application
 {
     private bool _measureStartup;
+    private bool _background;
+    private double _savedLeft, _savedTop;
+
+    /// <summary>Parsed command line (set by <see cref="Program.Main"/>; parsed from the startup args otherwise).</summary>
+    internal LaunchArgs? Launch { get; init; }
+
+    /// <summary>The single-instance gate when this process is the primary (null for --measure-startup).</summary>
+    internal SingleInstance? Instance { get; init; }
     private readonly List<(string Step, double Ms)> _marks = [];
 
     private DateTime _processStart;
@@ -29,9 +38,7 @@ public partial class App : Application
 
     public App()
     {
-        // TABLEPLSU_ROOT redirects all app data (roaming + local) for smoke tests and portable runs.
-        if (Environment.GetEnvironmentVariable("TABLEPLSU_ROOT") is { Length: > 0 } root)
-            Core.Paths.AppPaths.Current = Core.Paths.AppPaths.ForRoot(root);
+        // TABLEPLSU_ROOT (portable / smoke-test data root) is applied by Program.Main before this runs.
         // Settings/themes/connections JSON loads on the thread pool while WPF parses App.xaml and starts up.
         AppServices.Preload();
     }
@@ -39,7 +46,9 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
-        _measureStartup = e.Args.Any(a => string.Equals(a, "--measure-startup", StringComparison.OrdinalIgnoreCase));
+        var launch = Launch ?? LaunchArgs.Parse(e.Args);
+        _measureStartup = launch.MeasureStartup;
+        _background = launch.Background && !_measureStartup;
 
         Mark("OnStartup");
         UiDispatch.Initialize(Dispatcher);
@@ -55,6 +64,18 @@ public partial class App : Application
         MainWindow = window;
         AppServices.Features.RaiseWindowCreated(window);
         window.ContentRendered += OnFirstContentRendered;
+        if (_background)
+        {
+            // --background (sign-in start): build and render the window once offscreen so its types, templates and code
+            // are warm, then hide it; the first Open is just Show().
+            _savedLeft = window.Left;
+            _savedTop = window.Top;
+            window.WindowStartupLocation = WindowStartupLocation.Manual;
+            window.Left = -20000;
+            window.Top = -20000;
+            window.ShowActivated = false;
+            window.ShowInTaskbar = false;
+        }
         window.Show();
         Mark("shown");
     }
@@ -72,11 +93,26 @@ public partial class App : Application
             return;
         }
 
+        if (_background)
+        {
+            window.Hide();
+            window.ShowInTaskbar = true;
+            window.ShowActivated = true;
+            var area = SystemParameters.WorkArea;
+            window.Left = double.IsNaN(_savedLeft) ? area.Left + Math.Max(0, (area.Width - window.Width) / 2) : _savedLeft;
+            window.Top = double.IsNaN(_savedTop) ? area.Top + Math.Max(0, (area.Height - window.Height) / 2) : _savedTop;
+            // Workspaces (connections, password prompts) wait for the first Open.
+            ResidentMode.PendingRestore = RestoreWorkspaces;
+        }
+
         // Deferred until the window is interactive.
         Dispatcher.BeginInvoke(() =>
         {
             AppServices.StartBackgroundServices();
+            ResidentMode.Start(Instance);
+            if (_background) return;
             RestoreWorkspaces(window);
+            if (Launch?.Url is { } url) ResidentMode.OpenUrl(url, window);
         }, DispatcherPriority.ApplicationIdle);
     }
 
@@ -139,6 +175,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        ResidentMode.Shutdown();
         AppServices.Shutdown();
         base.OnExit(e);
     }

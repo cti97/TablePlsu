@@ -19,6 +19,8 @@ public class SettingsServiceTests
 
         Assert.True(s.General.ReopenWorkspacesOnStartup);
         Assert.Equal(NewTabOpens.SqlEditor, s.General.NewTabOpens);
+        Assert.False(s.General.KeepRunningInTray);
+        Assert.False(s.General.StartWithWindows);
 
         Assert.Equal("Cascadia Mono", s.Editor.FontFamily);
         Assert.Equal(12, s.Editor.FontSize);
@@ -69,6 +71,20 @@ public class SettingsServiceTests
         Assert.Contains("production", s.Tags.Keys);
         Assert.Contains("local", s.Tags.Keys);
         Assert.NotEmpty(s.Toolbar.Items);
+    }
+
+    [Fact]
+    public void Resident_mode_keys_are_read_from_user_settings()
+    {
+        using var tmp = new TempDir();
+        tmp.Paths.EnsureCreated();
+        File.WriteAllText(tmp.Paths.SettingsFile, """{ "general": { "keepRunningInTray": true, "startWithWindows": true } }""");
+        using var svc = new SettingsService(tmp.Paths);
+        svc.Load();
+        Assert.Null(svc.LastError);
+        Assert.True(svc.Current.General.KeepRunningInTray);
+        Assert.True(svc.Current.General.StartWithWindows);
+        Assert.True(svc.Current.General.ReopenWorkspacesOnStartup);
     }
 
     [Fact]

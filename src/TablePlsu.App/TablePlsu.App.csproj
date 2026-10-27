@@ -13,9 +13,13 @@
     <AssemblyTitle>TablePlsu</AssemblyTitle>
     <Description>A fast PostgreSQL client for Windows.</Description>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Program.Main runs the single-instance check before WPF loads (the generated App.Main is not used). -->
+    <StartupObject>TablePlsu.App.Program</StartupObject>
   </PropertyGroup>
 
-  <!-- Speed rules (architecture §Speed rules 2). The RID is supplied on publish: -r win-x64. -->
+  <!-- Speed rules (architecture §Speed rules 2). The RID is supplied on publish: -r win-x64. scripts/publish.ps1 publishes
+       self-contained with PublishReadyToRunComposite (runtime + WPF + app in one composite R2R image), which cuts startup
+       JIT from ~1,700 to ~560 methods; -FrameworkDependent gives the small per-assembly R2R build. -->
   <PropertyGroup>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
