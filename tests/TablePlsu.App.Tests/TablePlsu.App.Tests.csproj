@@ -21,6 +21,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\TablePlsu.App\TablePlsu.App.csproj" />
+    <!-- Out-of-process UI Automation driver (copied next to the tests; never loaded into the test host). -->
+    <ProjectReference Include="..\TablePlsu.UiDriver\TablePlsu.UiDriver.csproj" />
   </ItemGroup>
 
 </Project>

@@ -152,6 +152,75 @@ public class EditorSessionTests
     }
 
     [Fact]
+    public void Same_connection_in_two_windows_loses_no_tab_and_never_restores_one_twice()
+    {
+        Init();
+        var profile = Profile with { Id = "two" + Guid.NewGuid().ToString("N")[..8] };
+        var first = Open(profile);
+        var a = (SqlEditorTabViewModel)first.NewTab();
+        a.Document.Text = "select 'window 1';";
+        EditorSessionManager.For(first).FlushNow();
+
+        // Second window on the same connection (Ctrl+K "open in new window", New Window…).
+        var second = Open(profile);
+        Assert.DoesNotContain(second.Tabs.OfType<SqlEditorTabViewModel>(), t => t.Id == a.Id);
+        var b = (SqlEditorTabViewModel)second.NewTab();
+        b.Document.Text = "select 'window 2';";
+        EditorSessionManager.For(second).FlushNow();
+        EditorSessionManager.For(first).FlushNow();
+        second.CloseAsync().Wait();
+        first.CloseAsync().Wait();
+
+        var again = Open(profile);
+        var texts = again.Tabs.OfType<SqlEditorTabViewModel>().Select(t => t.Document.Text).Order().ToList();
+        Assert.Equal(["select 'window 1';", "select 'window 2';"], texts);
+        again.CloseAsync().Wait();
+    }
+
+    [Fact]
+    public void FlushAll_writes_text_still_inside_the_editor_debounce()
+    {
+        Init();
+        var previous = UiDispatch.Dispatcher;
+        UiDispatch.Initialize(System.Windows.Threading.Dispatcher.CurrentDispatcher);
+        try
+        {
+            var profile = Profile with { Id = "crash" + Guid.NewGuid().ToString("N")[..8] };
+            var ws = Open(profile);
+            var tab = (SqlEditorTabViewModel)ws.NewTab();
+            tab.Document.Text = "select 'typed 100 ms before the crash';"; // the 500 ms debounce timer has not fired
+            EditorSessionManager.FlushAll();
+            Assert.Equal("select 'typed 100 ms before the crash';", File.ReadAllText(Path.Combine(EditorDir(profile), tab.Id + ".sql")));
+            var store = new EditorSessionStore(AppServices.Paths, profile.Id);
+            Assert.Contains(store.Load().Tabs, t => t.Id == tab.Id);
+            ws.CloseAsync().Wait();
+        }
+        finally
+        {
+            UiDispatch.Initialize(previous!);
+        }
+    }
+
+    [Fact]
+    public void Restore_first_mode_keeps_the_other_tabs_on_disk()
+    {
+        Init();
+        var profile = Profile with { Id = "first" + Guid.NewGuid().ToString("N")[..8] };
+        var ws = Open(profile);
+        ((SqlEditorTabViewModel)ws.NewTab()).Document.Text = "one";
+        ((SqlEditorTabViewModel)ws.NewTab()).Document.Text = "two";
+        ws.CloseAsync().Wait();
+
+        AppServices.Settings.SetValue("editor.autoSaveTabs", System.Text.Json.Nodes.JsonValue.Create("first"));
+        Assert.Equal(TablePlsu.Core.Settings.AutoSaveTabs.First, AppServices.Current.Editor.AutoSaveTabs);
+        var ws2 = Open(profile);
+        Assert.Single(ws2.Tabs);
+        ws2.CloseAsync().Wait();
+
+        Assert.Equal(2, new EditorSessionStore(AppServices.Paths, profile.Id).LoadTabs().Count);
+    }
+
+    [Fact]
     public void Run_without_connection_shows_a_message_tab()
     {
         Init();
