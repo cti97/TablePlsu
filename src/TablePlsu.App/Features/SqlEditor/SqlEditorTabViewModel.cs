@@ -256,6 +256,7 @@ public sealed partial class SqlEditorTabViewModel : TabViewModelBase
             {
                 failure = ex;
             }
+            await run.CompleteAsync().ConfigureAwait(false); // every streamed row is in its tab before Finish
             await UiDispatch.InvokeAsync(() => Finish(run, result, failure, sw.Elapsed), DispatcherPriority.Background).ConfigureAwait(true);
         }
         finally
@@ -297,18 +298,51 @@ public sealed partial class SqlEditorTabViewModel : TabViewModelBase
         SelectedResult = tab;
     }
 
-    /// <summary>Per-run streaming state. <see cref="OnBatch"/> runs on the query thread; UI work is posted in order.</summary>
-    private sealed class RunState(SqlEditorTabViewModel owner, IWorkspace ws, RunTarget target, bool collapse, int numberOffset, int rowLimit, int documentLength)
+    /// <summary>
+    /// Per-run streaming state. <see cref="OnBatch"/> runs on the query thread and only buffers; the UI applies
+    /// everything buffered so far in coalesced flushes (<see cref="ResultBatchPump"/>), in order.
+    /// </summary>
+    private sealed class RunState
     {
         private readonly Dictionary<int, ResultTabViewModel> _tabs = [];
+        private readonly SqlEditorTabViewModel owner;
+        private readonly IWorkspace ws;
+        private readonly RunTarget target;
+        private readonly bool collapse;
+        private readonly int numberOffset;
+        private readonly int rowLimit;
+        private readonly int documentLength;
+        private readonly ResultBatchPump _pump;
         private ResultTabViewModel? _collapsed;
+
+        public RunState(SqlEditorTabViewModel owner, IWorkspace ws, RunTarget target, bool collapse, int numberOffset, int rowLimit, int documentLength)
+        {
+            this.owner = owner;
+            this.ws = ws;
+            this.target = target;
+            this.collapse = collapse;
+            this.numberOffset = numberOffset;
+            this.rowLimit = rowLimit;
+            this.documentLength = documentLength;
+            _pump = new ResultBatchPump(ApplyRows, Apply);
+        }
 
         public ResultTabViewModel? FirstError { get; private set; }
 
         public void OnBatch(ResultBatch batch)
         {
             if (batch is { IsFinal: true, Result: { } r }) RecordHistory(batch, r);
-            UiDispatch.PostBackground(() => Apply(batch));
+            _pump.Add(batch);
+        }
+
+        /// <summary>Completes when every batch reported so far has been applied on the UI thread.</summary>
+        public Task CompleteAsync() => _pump.CompleteAsync();
+
+        private void ApplyRows(ResultBatch batch, IReadOnlyList<object?[]> rows)
+        {
+            if (owner._closed) return;
+            var tab = TabFor(batch);
+            if (!collapse) tab.AddRows(batch.Columns, rows);
         }
 
         private void RecordHistory(ResultBatch batch, StatementResult r)

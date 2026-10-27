@@ -32,6 +32,40 @@ public class DbSessionStreamingPerfTests(ITestOutputHelper output)
         }
     }
 
+    /// <summary>
+    /// Cost of the row-limit cut-off (cancel request on a second connection + draining the cancelled reader) compared
+    /// with a query that ends by itself after the same number of rows. Interleaved, median of 7.
+    /// </summary>
+    [Fact]
+    [Trait("Category", "Perf")]
+    public async Task Row_limit_cutoff_cost_vs_natural_end()
+    {
+        if (!TestPg.Available(output)) return;
+        var (profile, secrets) = TestPg.Profile();
+        await using var s = new DbSession(profile, secrets);
+        await s.ConnectAsync();
+        var cut = new List<double>();
+        var natural = new List<double>();
+        for (var i = 0; i < 8; i++)
+        {
+            var sw = Stopwatch.StartNew();
+            var a = await s.ExecuteAsync("select * from sales.orders", new ExecuteOptions { RowLimit = 1000 });
+            var cutMs = sw.Elapsed.TotalMilliseconds;
+            sw.Restart();
+            var b = await s.ExecuteAsync("select * from sales.orders limit 1001", new ExecuteOptions { RowLimit = null });
+            var naturalMs = sw.Elapsed.TotalMilliseconds;
+            Assert.True(a.Statements[0].Truncated);
+            Assert.Equal(1000, a.Statements[0].Rows.Count);
+            Assert.Equal(1001, b.Statements[0].Rows.Count);
+            if (i == 0) continue; // warm-up
+            cut.Add(cutMs);
+            natural.Add(naturalMs);
+        }
+        cut.Sort();
+        natural.Sort();
+        output.WriteLine($"row limit 1000 on 200k rows (cancel): median {cut[cut.Count / 2]:F1} ms; same rows ending naturally: median {natural[natural.Count / 2]:F1} ms");
+    }
+
     private sealed class ListProgressFirst(Action onFirst) : IProgress<ResultBatch>
     {
         public void Report(ResultBatch value) { if (value.Rows.Count > 0) onFirst(); }
