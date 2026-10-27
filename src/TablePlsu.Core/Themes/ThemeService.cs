@@ -26,10 +26,24 @@ public sealed class ThemeService
         Reload();
     }
 
+    // Extra built-ins (spec §13 P1). Parsed lazily, only when listed or selected, so startup does not pay for them.
+    private static readonly Lazy<ThemeDefinition> Nord = new(() => LoadBuiltIn("TablePlsu.Core.Themes.nord.json", "Nord", ThemeBase.Dark));
+    private static readonly Lazy<ThemeDefinition> SolarizedLight = new(() => LoadBuiltIn("TablePlsu.Core.Themes.solarized-light.json", "Solarized Light", ThemeBase.Light));
+
     public static ThemeDefinition BuiltInLight => Light.Value;
     public static ThemeDefinition BuiltInDark => Dark.Value;
 
-    public IReadOnlyList<string> AvailableThemes => _themes.Values.Select(t => t.Name).ToList();
+    /// <summary>Names of the built-in themes (Light, Dark, Nord, Solarized Light).</summary>
+    public static IReadOnlyList<string> BuiltInNames { get; } = ["Light", "Dark", "Nord", "Solarized Light"];
+
+    private static readonly Dictionary<string, Lazy<ThemeDefinition>> ExtraBuiltIns = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Nord"] = Nord,
+        ["Solarized Light"] = SolarizedLight,
+    };
+
+    public IReadOnlyList<string> AvailableThemes =>
+        _themes.Values.Select(t => t.Name).Concat(ExtraBuiltIns.Keys).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
     /// <summary>Problems found while loading user themes or resolving the last settings.</summary>
     public IReadOnlyList<string> Warnings => _warnings;
@@ -57,7 +71,9 @@ public sealed class ThemeService
         }
     }
 
-    public ThemeDefinition? Find(string name) => _themes.GetValueOrDefault(name);
+    /// <summary>A user theme of that name, else a built-in one, else null.</summary>
+    public ThemeDefinition? Find(string name) =>
+        _themes.GetValueOrDefault(name) ?? (ExtraBuiltIns.TryGetValue(name, out var builtIn) ? builtIn.Value : null);
 
     /// <summary>The named theme, or the built-in Light theme when it does not exist.</summary>
     public ThemeDefinition Get(string name) => Find(name) ?? BuiltInLight;

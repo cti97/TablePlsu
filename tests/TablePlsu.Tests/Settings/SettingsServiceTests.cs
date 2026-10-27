@@ -95,10 +95,10 @@ public class SettingsServiceTests
         Assert.True(s.Editor.Autocomplete.Tables);
         Assert.Equal(ThemeMode.Dark, s.Theme.Mode);
         Assert.Equal("#FF0000", s.Theme.Overrides["editor.keyword"]);
-        Assert.Equal(["F5"], s.Keymap["query.runCurrent"]);
+        Assert.Equal(["F5"], s.Keymap["query.runCurrent"]!);
         Assert.True(s.Keymap.ContainsKey("tab.close"));
         Assert.Null(s.Keymap["tab.close"]);
-        Assert.Equal(["Ctrl+Tab", "Ctrl+PageDown"], s.Keymap["tab.next"]);
+        Assert.Equal(["Ctrl+Tab", "Ctrl+PageDown"], s.Keymap["tab.next"]!);
         Assert.Equal("#00FF00", s.Tags["qa"]);
         Assert.Contains("production", s.Tags.Keys); // merged with defaults
     }

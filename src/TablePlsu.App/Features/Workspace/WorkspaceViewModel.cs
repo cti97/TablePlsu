@@ -555,6 +555,13 @@ public sealed partial class WorkspaceViewModel : ObservableObject, IWorkspace, I
         StateChanged?.Invoke(this, state);
     }
 
+    /// <summary>Re-resolves <see cref="TagBrush"/> after settings.json "tags" changed (called by the Settings feature).</summary>
+    public void RefreshTagBrush()
+    {
+        TagBrush = ResolveTagBrush(Profile.Tag);
+        OnPropertyChanged(nameof(TagBrush));
+    }
+
     private static Brush? ResolveTagBrush(string? tag)
     {
         if (string.IsNullOrWhiteSpace(tag) || !AppServices.IsInitialized) return null;

@@ -5,7 +5,44 @@
   "type": "object",
   "additionalProperties": false,
   "$defs": {
-    "color": { "type": "string", "pattern": "^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$" },
+    "commandId": {
+      "type": "string",
+      "description": "command id",
+      "enum": [
+        "window.new", "settings.open", "keymap.open", "palette.openConnection", "app.fullScreen", "palette.openAnything",
+        "palette.openDatabase", "tab.new", "tab.close", "tab.reopenClosed", "tab.next", "tab.prev", "tab.goto1",
+        "tab.goto2", "tab.goto3", "tab.goto4", "tab.goto5", "tab.goto6", "tab.goto7", "tab.goto8", "tab.goto9",
+        "tab.reload", "editor.new", "workspace.reload", "workspace.reconnect", "workspace.disconnect", "sidebar.toggle",
+        "sidebar.search", "console.toggle", "changes.commit", "changes.preview", "changes.discard", "edit.undo",
+        "edit.redo", "query.cancel", "table.showData", "table.showStructure", "table.showIndexes", "file.open",
+        "query.runCurrent", "query.runAll", "editor.toggleLineComment", "editor.toggleBlockComment", "editor.fontBigger",
+        "editor.fontSmaller", "editor.toggleResults", "editor.find", "editor.replace", "editor.findNext",
+        "editor.findPrev", "file.saveAs", "table.filterToggle", "grid.insertRow", "grid.duplicateRow", "grid.deleteRow",
+        "grid.setValueMenu", "grid.editCell", "grid.copy", "grid.copyCells", "grid.paste", "grid.pasteCells",
+        "page.next", "page.prev", "grid.firstRow", "grid.lastRow", "sidebar.openItem", "sidebar.dropItem",
+        "sidebar.truncateItem", "filter.addRow", "filter.removeRow", "filter.toggleRow", "filter.applyAll",
+        "welcome.search"
+      ]
+    },
+    "themeKey": {
+      "type": "string",
+      "description": "theme colour key",
+      "enum": [
+        "app.window", "app.windowForeground", "app.mutedForeground", "app.border", "app.sidebar",
+        "app.sidebarForeground", "app.sidebarSelection", "app.tab", "app.tabForeground", "app.tabActive",
+        "app.tabActiveForeground", "app.tabHover", "app.toolbar", "app.toolbarForeground", "app.statusBar",
+        "app.statusBarForeground", "app.accent", "app.accentForeground", "app.hover", "app.inputBackground",
+        "app.inputBorder", "app.error", "app.warning", "app.success", "editor.background", "editor.foreground",
+        "editor.keyword", "editor.string", "editor.number", "editor.comment", "editor.type", "editor.function",
+        "editor.operator", "editor.parameter", "editor.selection", "editor.currentQueryBackground", "editor.currentLine",
+        "editor.errorUnderline", "editor.caret", "editor.lineNumbers", "editor.lineNumbersActive", "grid.background",
+        "grid.foreground", "grid.altRowBackground", "grid.lines", "grid.headerBackground", "grid.headerForeground",
+        "grid.selectionBackground", "grid.selectionForeground", "grid.cellSelectionBorder",
+        "grid.cellSelectionBackground", "grid.pendingNewBackground", "grid.pendingModifiedBackground",
+        "grid.pendingDeletedBackground", "grid.nullForeground"
+      ]
+    },
+    "color": { "type": "string", "pattern": "^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$", "description": "expected a colour like #RRGGBB, #RGB or #AARRGGBB" },
     "fontSize": { "type": "number", "minimum": 6, "maximum": 100 },
     "binding": { "type": "string", "description": "Key chord such as \"Ctrl+Shift+Enter\"." }
   },
@@ -112,11 +149,12 @@
       "additionalProperties": false,
       "properties": {
         "mode": { "enum": ["auto", "light", "dark"], "default": "auto" },
-        "light": { "type": "string", "default": "Light" },
-        "dark": { "type": "string", "default": "Dark" },
+        "light": { "type": "string", "default": "Light", "description": "Theme used in light mode: a built-in (Light, Solarized Light) or the name of a file in the themes folder." },
+        "dark": { "type": "string", "default": "Dark", "description": "Theme used in dark mode: a built-in (Dark, Nord) or the name of a file in the themes folder." },
         "overrides": {
           "type": "object",
           "description": "Colour key (e.g. \"editor.keyword\") to colour.",
+          "propertyNames": { "$ref": "#/$defs/themeKey" },
           "additionalProperties": { "$ref": "#/$defs/color" }
         }
       }
@@ -124,6 +162,7 @@
     "keymap": {
       "type": "object",
       "description": "Command id to binding, list of bindings, or null to unbind.",
+      "propertyNames": { "$ref": "#/$defs/commandId" },
       "additionalProperties": {
         "oneOf": [
           { "$ref": "#/$defs/binding" },
