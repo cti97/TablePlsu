@@ -26,6 +26,7 @@ public partial class MainWindow : Window
     {
         base.OnSourceInitialized(e);
         if (AppServices.IsInitialized) AppServices.Theme.ApplyTitleBar(this);
+        StartupMarks.Mark("titlebar");
     }
 
     protected override void OnClosing(CancelEventArgs e)

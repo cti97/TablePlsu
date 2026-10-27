@@ -25,16 +25,7 @@ public partial class App : Application
 
     /// <summary>The single-instance gate when this process is the primary (null for --measure-startup).</summary>
     internal SingleInstance? Instance { get; init; }
-    private readonly List<(string Step, double Ms)> _marks = [];
-
-    private DateTime _processStart;
-
-    private void Mark(string step)
-    {
-        if (!_measureStartup) return;
-        if (_processStart == default) _processStart = Process.GetCurrentProcess().StartTime;
-        _marks.Add((step, (DateTime.Now - _processStart).TotalMilliseconds));
-    }
+    private static void Mark(string step) => StartupMarks.Mark(step);
 
     public App()
     {
@@ -49,6 +40,7 @@ public partial class App : Application
         var launch = Launch ?? LaunchArgs.Parse(e.Args);
         _measureStartup = launch.MeasureStartup;
         _background = launch.Background && !_measureStartup;
+        StartupMarks.Enabled = _measureStartup;
 
         Mark("OnStartup");
         UiDispatch.Initialize(Dispatcher);
@@ -67,6 +59,12 @@ public partial class App : Application
         MainWindow = window;
         AppServices.Features.RaiseWindowCreated(window);
         window.ContentRendered += OnFirstContentRendered;
+        StartupWarmup.UseSoftwareFirstFrame(window);
+        if (_measureStartup)
+        {
+            window.SourceInitialized += (_, _) => Mark("hwnd");
+            window.LayoutUpdated += (_, _) => Mark("layout");
+        }
         if (_background)
         {
             // --background (sign-in start): build and render the window once offscreen so its types, templates and code
@@ -81,6 +79,8 @@ public partial class App : Application
         }
         window.Show();
         Mark("shown");
+        // Subscribed after Show: subscribing earlier creates the MediaContext (render channel) outside Show.
+        if (_measureStartup) System.Windows.Media.CompositionTarget.Rendering += (_, _) => Mark("render");
     }
 
     private void OnFirstContentRendered(object? sender, EventArgs e)
@@ -91,8 +91,15 @@ public partial class App : Application
         if (_measureStartup)
         {
             Mark("rendered");
-            ReportStartup(_marks);
-            Shutdown(0);
+            // Also time the switch back to hardware rendering (reported as "hw", after the first-render total).
+            StartupWarmup.EndFirstWindow();
+            window.InvalidateVisual();
+            Dispatcher.BeginInvoke(() =>
+            {
+                Mark("hw");
+                ReportStartup(StartupMarks.All);
+                Shutdown(0);
+            }, DispatcherPriority.ApplicationIdle);
             return;
         }
 
@@ -111,6 +118,7 @@ public partial class App : Application
         // Deferred until the window is interactive.
         Dispatcher.BeginInvoke(() =>
         {
+            StartupWarmup.EndFirstWindow();
             AppServices.StartBackgroundServices();
             ResidentMode.Start(Instance);
             if (_background) return;
@@ -139,10 +147,9 @@ public partial class App : Application
         }
     }
 
-    private static void ReportStartup(List<(string Step, double Ms)> marks)
+    private static void ReportStartup(IReadOnlyList<(string Step, double Ms)> marks)
     {
-        var started = Process.GetCurrentProcess().StartTime;
-        var ms = (DateTime.Now - started).TotalMilliseconds;
+        var ms = marks.FirstOrDefault(m => m.Step == "rendered").Ms;
         var npgsqlLoaded = AppDomain.CurrentDomain.GetAssemblies().Any(a => a.GetName().Name == "Npgsql");
         var steps = string.Join(", ", marks.Select(m => $"{m.Step} {m.Ms:F0}"));
         // JIT work is a load-independent signal (wall-clock timings swing with machine load): methods compiled at run time
@@ -151,11 +158,13 @@ public partial class App : Application
         var jitMs = System.Runtime.JitInfo.GetCompilationTime().TotalMilliseconds;
         var assemblies = AppDomain.CurrentDomain.GetAssemblies().Length;
         // CPU time is far less sensitive to machine load than wall-clock: UI thread (the critical path) and whole process.
-        var uiCpu = GetThreadTimes(GetCurrentThread(), out _, out _, out var kernel, out var user)
-            ? (kernel + user) / 10_000.0
-            : double.NaN;
+        var uiCpu = StartupMarks.CurrentThreadCpuMs();
+        // UI-thread CPU (millions of cycles) at each mark, same order as the wall-clock steps.
+        var cpuSteps = string.Join(", ", marks.Select((m, i) => $"{m.Step} {StartupMarks.ThreadCpu[i]:F0}"));
         var cpu = Process.GetCurrentProcess().TotalProcessorTime.TotalMilliseconds;
-        var line = $"startup: {ms:F0} ms to first ContentRendered (npgsql loaded: {(npgsqlLoaded ? "yes" : "no")}; jit {jitted} methods {jitMs:F0} ms; assemblies {assemblies}; cpu ui {uiCpu:F0} ms process {cpu:F0} ms; {steps})";
+        var uiJitted = System.Runtime.JitInfo.GetCompiledMethodCount(currentThread: true);
+        var uiJitMs = System.Runtime.JitInfo.GetCompilationTime(currentThread: true).TotalMilliseconds;
+        var line = $"startup: {ms:F0} ms to first ContentRendered (npgsql loaded: {(npgsqlLoaded ? "yes" : "no")}; jit {jitted} methods {jitMs:F0} ms; ui jit {uiJitted} methods {uiJitMs:F0} ms; assemblies {assemblies}; cpu ui {uiCpu:F0} ms process {cpu:F0} ms; ui mcycles {cpuSteps}; {steps})";
 
         AttachConsole(-1);
         try
@@ -202,10 +211,5 @@ public partial class App : Application
 
     [DllImport("kernel32.dll")]
     private static extern bool AttachConsole(int processId);
-
-    [DllImport("kernel32.dll")]
-    private static extern IntPtr GetCurrentThread();
-
-    [DllImport("kernel32.dll")]
-    private static extern bool GetThreadTimes(IntPtr thread, out long creation, out long exit, out long kernel, out long user);
 }
+

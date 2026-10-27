@@ -31,6 +31,13 @@
     <UseSystemResourceKeys>false</UseSystemResourceKeys>
   </PropertyGroup>
 
+  <!-- Touch/pen through the WM_POINTER stack instead of WISP: WISP enumerates tablets on a pen thread inside the first
+       Window.Show (35-100 ms of waiting); the pointer stack reads the device list directly. Mouse and keyboard input
+       are unchanged; touch and pen keep working (Windows 8+). -->
+  <ItemGroup>
+    <RuntimeHostConfigurationOption Include="Switch.System.Windows.Input.Stylus.EnablePointerSupport" Value="true" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\TablePlsu.Core\TablePlsu.Core.csproj" />
   </ItemGroup>
