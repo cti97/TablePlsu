@@ -20,6 +20,8 @@
     <EmbeddedResource Include="Settings\settings.schema.json" LogicalName="TablePlsu.Core.Settings.settings.schema.json" />
     <EmbeddedResource Include="Themes\light.json" LogicalName="TablePlsu.Core.Themes.light.json" />
     <EmbeddedResource Include="Themes\dark.json" LogicalName="TablePlsu.Core.Themes.dark.json" />
+    <EmbeddedResource Include="Themes\nord.json" LogicalName="TablePlsu.Core.Themes.nord.json" />
+    <EmbeddedResource Include="Themes\solarized-light.json" LogicalName="TablePlsu.Core.Themes.solarized-light.json" />
   </ItemGroup>
 
   <ItemGroup>
