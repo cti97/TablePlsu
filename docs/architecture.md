@@ -50,6 +50,7 @@ tests/TablePlsu.Tests  — xUnit, references Core
 | `Features/Sidebar/` | Object tree, schema selector, history tab, search. |
 | `Features/Palette/` | Open Anything (Ctrl+P), Open Database (Ctrl+K), Open Connection (Ctrl+Shift+K). |
 | `Features/SqlEditor/` | `SqlEditorTabViewModel` and view (AvalonEdit, highlighting `.xshd` generated from theme, current-query highlight, run/cancel/row-limit, result tabs, message view, autosave hook, completion adapter). |
+| `Features/Completion/` | `SqlCompletion` (per editor: keys, auto-close pairs, refresh on each keystroke via `CompletionEngine`, synchronous: ~0.5 ms at 5k tables). The list is one `CompletionPopup` per UI thread (virtualized recycling ListBox of owner-drawn `CompletionRow`s over reusable `SqlCompletionData` slots), shown in the editor window's adorner layer by a per-editor `CompletionAdorner`: no top-level window, never focused, AutomationId `CompletionList`. Warmed at idle when an editor loads. `CompletionPerfTests` / `scripts/perf-completion.ps1` measure it. |
 | `Features/Results/` | `ResultGrid` user control (virtualized DataGrid over `object?[]` rows, copy TSV, range selection) reused by the editor and table view. |
 | `Features/TableData/` | Table tab: Data/Structure/Index bottom tabs, paging, sort, filter bar, inline edit, pending changes, Preview window, commit. |
 | `Features/Structure/` | Structure, index and DDL views, create table editor, function editor. |

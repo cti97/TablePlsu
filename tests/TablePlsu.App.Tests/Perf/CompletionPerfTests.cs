@@ -183,6 +183,38 @@ public class CompletionPerfTests(ITestOutputHelper output)
                          $"{name}.layouts={Median(s.Select(x => (double)x.Layouts)):F0} {name}.cpuMaxMs={s.Max(x => x.CpuMs):F2}");
     }
 
+    /// <summary>The engine alone, in a process that does nothing else (run it on its own: --filter ~Engine_only).</summary>
+    [Fact]
+    public void Engine_only_five_thousand_tables()
+    {
+        var md = Big();
+        var cpm = CyclesPerMs();
+        var prefixSql = string.Concat(Enumerable.Repeat("SELECT a.user_col0 FROM user_user_0 a WHERE a.log_col6 = 'x';\n", 100));
+        var options = CompletionOptions.From(new AutocompleteSettings(), 100);
+        foreach (var (name, sql) in new[]
+                 {
+                     ("soloColumns", "SELECT a.user_col0, b.ord FROM user_user_0 a JOIN order_user_1 b ON b.pay = p"),
+                     ("soloFunctions", "SELECT a.user_col0 FROM user_user_0 a WHERE fn_pay"),
+                     ("soloTables", "SELECT * FROM u"),
+                     ("soloTables2", "SELECT * FROM pay"),
+                 })
+        {
+            var text = prefixSql + sql;
+            for (var i = 0; i < 300; i++) CompletionEngine.Complete(text, text.Length, md, options);   // tier-1 JIT
+            Thread.Sleep(200);
+            var samples = new List<Sample>();
+            for (var i = 0; i < 300; i++)
+            {
+                var b0 = GC.GetAllocatedBytesForCurrentThread();
+                var c0 = Cycles();
+                var sw = Stopwatch.StartNew();
+                CompletionEngine.Complete(text, text.Length, md, options);
+                samples.Add(new Sample(sw.Elapsed.TotalMilliseconds, (Cycles() - c0) / cpm, GC.GetAllocatedBytesForCurrentThread() - b0, 0, 0));
+            }
+            Report(name, samples);
+        }
+    }
+
     [Fact]
     public void Autocomplete_five_thousand_tables()
     {
@@ -262,18 +294,24 @@ public class CompletionPerfTests(ITestOutputHelper output)
             output.WriteLine($"PERF refresh.ms={h.Completion.LastRefreshMs:F2} cyclesPerMs={cpm:F0}");
 
             // The engine alone (what would move off the UI thread): the slowest context, columns + 3000 functions.
-            var text = prefixSql + "SELECT a.user_col0, b.ord FROM user_user_0 a JOIN order_user_1 b ON b.pay = p";
             var options = CompletionOptions.From(new AutocompleteSettings(), 100);
-            var engine = new List<Sample>();
-            for (var i = 0; i < 25; i++)
+            void Engine(string name, string sql)
             {
-                var b0 = GC.GetAllocatedBytesForCurrentThread();
-                var c0 = Cycles();
-                var sw = Stopwatch.StartNew();
-                CompletionEngine.Complete(text, text.Length, md, options);
-                engine.Add(new Sample(sw.Elapsed.TotalMilliseconds, (Cycles() - c0) / cpm, GC.GetAllocatedBytesForCurrentThread() - b0, 0, 0));
+                var text = prefixSql + sql;
+                var samples = new List<Sample>();
+                for (var i = 0; i < 200; i++)
+                {
+                    var b0 = GC.GetAllocatedBytesForCurrentThread();
+                    var c0 = Cycles();
+                    var sw = Stopwatch.StartNew();
+                    CompletionEngine.Complete(text, text.Length, md, options);
+                    samples.Add(new Sample(sw.Elapsed.TotalMilliseconds, (Cycles() - c0) / cpm, GC.GetAllocatedBytesForCurrentThread() - b0, 0, 0));
+                }
+                Report(name, samples);
             }
-            Report("engine", engine);
+            Engine("engine", "SELECT a.user_col0, b.ord FROM user_user_0 a JOIN order_user_1 b ON b.pay = p");   // columns + 3000 functions + keywords
+            Engine("engineFn", "SELECT a.user_col0 FROM user_user_0 a WHERE fn_pay");                           // function-heavy prefix
+            Engine("engineTables", "SELECT * FROM u");                                                         // 5000 tables, 1-char prefix
         });
     }
 }
