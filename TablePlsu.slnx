@@ -4,6 +4,7 @@
     <Project Path="src/TablePlsu.Core/TablePlsu.Core.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/TablePlsu.App.Tests/TablePlsu.App.Tests.csproj" />
     <Project Path="tests/TablePlsu.Tests/TablePlsu.Tests.csproj" />
   </Folder>
 </Solution>

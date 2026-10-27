@@ -1,0 +1,135 @@
+<UserControl x:Class="TablePlsu.App.Features.Welcome.WelcomeView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:infra="clr-namespace:TablePlsu.App.Infrastructure"
+             xmlns:local="clr-namespace:TablePlsu.App.Features.Welcome"
+             infra:CommandScopes.Scope="Welcome"
+             Background="{DynamicResource c.app.window}">
+    <UserControl.Resources>
+        <ContextMenu x:Key="ItemMenu">
+            <MenuItem Header="Connect" FontWeight="SemiBold" Click="OnMenuConnect" />
+            <MenuItem Header="Connect in New Window" Click="OnMenuConnectNewWindow" />
+            <Separator />
+            <MenuItem Header="Edit…" Click="OnMenuEdit" />
+            <MenuItem Header="Duplicate" Click="OnMenuDuplicate" />
+            <Separator />
+            <MenuItem Header="Delete…" Click="OnMenuDelete" />
+        </ContextMenu>
+        <ContextMenu x:Key="ListMenu">
+            <MenuItem Header="New">
+                <MenuItem Header="Connection…" Command="{Binding NewConnectionCommand}" />
+                <MenuItem Header="Import Connection">
+                    <MenuItem Header="From URL…" Command="{Binding ImportFromUrlCommand}" />
+                </MenuItem>
+            </MenuItem>
+        </ContextMenu>
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="260" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <!-- Left: app + actions -->
+        <Border Background="{DynamicResource c.app.sidebar}" BorderBrush="{DynamicResource c.app.border}" BorderThickness="0,0,1,0">
+            <DockPanel Margin="20,28,20,20">
+                <StackPanel DockPanel.Dock="Top">
+                    <TextBlock Text="TablePlsu" FontSize="24" FontWeight="SemiBold" Foreground="{DynamicResource c.app.sidebarForeground}" />
+                    <TextBlock Text="PostgreSQL client" Style="{StaticResource MutedText}" Margin="0,2,0,24" />
+                    <Button Content="Create Connection…" Style="{StaticResource AccentButton}" HorizontalContentAlignment="Left"
+                            Command="{Binding NewConnectionCommand}" Margin="0,0,0,8" />
+                    <Button Content="Import from URL…" HorizontalContentAlignment="Left" Command="{Binding ImportFromUrlCommand}" Margin="0,0,0,8" />
+                    <Button Content="Backup Database…" HorizontalContentAlignment="Left" IsEnabled="False" Margin="0,0,0,8" ToolTip="Coming in P1" />
+                    <Button Content="Restore Database…" HorizontalContentAlignment="Left" IsEnabled="False" ToolTip="Coming in P1" />
+                </StackPanel>
+                <TextBlock DockPanel.Dock="Bottom" VerticalAlignment="Bottom" Style="{StaticResource MutedText}" TextWrapping="Wrap" FontSize="12">
+                    <Run Text="{Binding Source={x:Static infra:AppServices.Shortcuts}, Path=[welcome.search], Mode=OneWay}" /><LineBreak />
+                    <Run Text="{Binding Source={x:Static infra:AppServices.Shortcuts}, Path=[window.new], Mode=OneWay}" /><LineBreak />
+                    <Run Text="{Binding Source={x:Static infra:AppServices.Shortcuts}, Path=[settings.open], Mode=OneWay}" />
+                </TextBlock>
+            </DockPanel>
+        </Border>
+
+        <!-- Right: connection list -->
+        <Grid Grid.Column="1" Visibility="{Binding IsFormOpen, Converter={x:Static infra:BoolToVisibilityConverter.Instance}, ConverterParameter=invert}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <Grid Margin="24,20,24,10">
+                <TextBox x:Name="SearchBox" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" MinHeight="30" Padding="28,4,6,4"
+                         PreviewKeyDown="OnSearchKeyDown" />
+                <TextBlock Style="{StaticResource Icon}" Text="&#xE721;" HorizontalAlignment="Left" Margin="9,0,0,0" IsHitTestVisible="False"
+                           Foreground="{DynamicResource c.app.mutedForeground}" FontSize="12" />
+                <TextBlock Text="Search connections…" Margin="30,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False" Style="{StaticResource MutedText}"
+                           Visibility="{Binding SearchText, Converter={x:Static infra:NullToVisibilityConverter.Instance}, ConverterParameter=invert}" />
+            </Grid>
+
+            <ListBox x:Name="ConnectionList" Grid.Row="1" Margin="16,0,16,16" ItemsSource="{Binding Items}" SelectedItem="{Binding SelectedItem, Mode=TwoWay}"
+                     ContextMenu="{StaticResource ListMenu}" MouseDoubleClick="OnListDoubleClick" PreviewKeyDown="OnListKeyDown"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="ContextMenu" Value="{StaticResource ItemMenu}" />
+                        <Setter Property="AutomationProperties.Name" Value="{Binding Name}" />
+                        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ListBoxItem">
+                                    <Border x:Name="Bd" CornerRadius="6" Margin="0,0,0,4" Background="Transparent">
+                                        <ContentPresenter />
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource c.app.hover}" />
+                                        </Trigger>
+                                        <Trigger Property="IsSelected" Value="True">
+                                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource c.app.sidebarSelection}" />
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </ListBox.ItemContainerStyle>
+                <ListBox.ItemTemplate>
+                    <DataTemplate DataType="{x:Type local:ConnectionItemViewModel}">
+                        <Grid Height="52">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="5" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Border CornerRadius="2" Margin="0,8" Background="{Binding ColorBrush, TargetNullValue=Transparent}" />
+                            <StackPanel Grid.Column="1" Margin="12,0" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{Binding Detail}" Style="{StaticResource MutedText}" FontSize="12" TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                            <Border Grid.Column="2" Style="{StaticResource TagPill}" Margin="0,0,12,0" Background="{Binding TagBrush, TargetNullValue=Gray}"
+                                    Visibility="{Binding Tag, Converter={x:Static infra:NullToVisibilityConverter.Instance}}">
+                                <TextBlock Text="{Binding Tag}" />
+                            </Border>
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+
+            <StackPanel Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Center"
+                        Visibility="{Binding HasConnections, Converter={x:Static infra:BoolToVisibilityConverter.Instance}, ConverterParameter=invert}">
+                <TextBlock Text="No connections yet" FontSize="16" HorizontalAlignment="Center" Margin="0,0,0,10" />
+                <Button Content="Create Connection…" Style="{StaticResource AccentButton}" Command="{Binding NewConnectionCommand}" />
+            </StackPanel>
+        </Grid>
+
+        <!-- Right: connection form (create / edit) -->
+        <ContentControl Grid.Column="1" Content="{Binding Form}" Focusable="False"
+                        Visibility="{Binding IsFormOpen, Converter={x:Static infra:BoolToVisibilityConverter.Instance}}">
+            <ContentControl.ContentTemplate>
+                <DataTemplate>
+                    <local:ConnectionFormView />
+                </DataTemplate>
+            </ContentControl.ContentTemplate>
+        </ContentControl>
+    </Grid>
+</UserControl>

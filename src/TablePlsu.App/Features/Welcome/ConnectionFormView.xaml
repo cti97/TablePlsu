@@ -1,0 +1,284 @@
+<UserControl x:Class="TablePlsu.App.Features.Welcome.ConnectionFormView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:infra="clr-namespace:TablePlsu.App.Infrastructure"
+             xmlns:local="clr-namespace:TablePlsu.App.Features.Welcome"
+             Background="{DynamicResource c.app.window}" Foreground="{DynamicResource c.app.windowForeground}">
+    <UserControl.Resources>
+        <Style x:Key="FieldLabel" TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="HorizontalAlignment" Value="Right" />
+            <Setter Property="Margin" Value="0,0,12,0" />
+            <Setter Property="Foreground" Value="{DynamicResource c.app.mutedForeground}" />
+        </Style>
+        <Style TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+            <Setter Property="Margin" Value="0,3" />
+            <Setter Property="MinHeight" Value="26" />
+        </Style>
+        <Style TargetType="PasswordBox" BasedOn="{StaticResource {x:Type PasswordBox}}">
+            <Setter Property="Margin" Value="0,3" />
+            <Setter Property="MinHeight" Value="26" />
+        </Style>
+        <Style TargetType="ComboBox" BasedOn="{StaticResource {x:Type ComboBox}}">
+            <Setter Property="Margin" Value="0,3" />
+        </Style>
+        <Style x:Key="BrowseButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Margin" Value="6,3,0,3" />
+            <Setter Property="Padding" Value="10,2" />
+            <Setter Property="Command" Value="{Binding BrowseCommand}" />
+        </Style>
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Text="{Binding Heading}" FontSize="18" FontWeight="SemiBold" Margin="24,18,24,6" />
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="24,0,24,12">
+            <Grid MaxWidth="640" HorizontalAlignment="Left">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="130" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" /> <!-- 0 Name -->
+                    <RowDefinition Height="Auto" /> <!-- 1 Color -->
+                    <RowDefinition Height="Auto" /> <!-- 2 Tag / safe mode -->
+                    <RowDefinition Height="Auto" /> <!-- 3 header -->
+                    <RowDefinition Height="Auto" /> <!-- 4 Host/Port -->
+                    <RowDefinition Height="Auto" /> <!-- 5 User -->
+                    <RowDefinition Height="Auto" /> <!-- 6 Password -->
+                    <RowDefinition Height="Auto" /> <!-- 7 Password command -->
+                    <RowDefinition Height="Auto" /> <!-- 8 Database -->
+                    <RowDefinition Height="Auto" /> <!-- 9 header SSL -->
+                    <RowDefinition Height="Auto" /> <!-- 10 SSL mode -->
+                    <RowDefinition Height="Auto" /> <!-- 11 key -->
+                    <RowDefinition Height="Auto" /> <!-- 12 cert -->
+                    <RowDefinition Height="Auto" /> <!-- 13 CA -->
+                    <RowDefinition Height="Auto" /> <!-- 14 SSH toggle -->
+                    <RowDefinition Height="Auto" /> <!-- 15 SSH section -->
+                    <RowDefinition Height="Auto" /> <!-- 16 header bootstrap -->
+                    <RowDefinition Height="Auto" /> <!-- 17 bootstrap -->
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0" Text="Name" Style="{StaticResource FieldLabel}" />
+                <TextBox Grid.Row="0" Grid.Column="1" x:Name="NameBox" Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" />
+
+                <TextBlock Grid.Row="1" Text="Status color" Style="{StaticResource FieldLabel}" />
+                <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Margin="0,3">
+                    <ItemsControl ItemsSource="{x:Static local:ConnectionFormViewModel.ColorPresets}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Horizontal" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button Width="22" Height="22" MinHeight="0" Padding="0" Margin="0,0,5,0" ToolTip="{Binding}"
+                                        Command="{Binding DataContext.PickColorCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                        CommandParameter="{Binding}">
+                                    <Button.Template>
+                                        <ControlTemplate TargetType="Button">
+                                            <Grid>
+                                                <Ellipse Fill="{Binding Converter={x:Static infra:HexToBrushConverter.Instance}}"
+                                                         Stroke="{DynamicResource c.app.inputBorder}" StrokeThickness="1" />
+                                                <TextBlock Text="∅" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="11"
+                                                           Foreground="{DynamicResource c.app.mutedForeground}"
+                                                           Visibility="{Binding Converter={x:Static infra:NullToVisibilityConverter.Instance}, ConverterParameter=invert}" />
+                                            </Grid>
+                                        </ControlTemplate>
+                                    </Button.Template>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBox Width="90" Margin="6,0,0,0" Text="{Binding Color, UpdateSourceTrigger=PropertyChanged}" ToolTip="#RRGGBB" />
+                    <Border Width="40" Height="22" CornerRadius="4" Margin="8,0,0,0"
+                            Background="{Binding Color, Converter={x:Static infra:HexToBrushConverter.Instance}}" />
+                </StackPanel>
+
+                <TextBlock Grid.Row="2" Text="Tag" Style="{StaticResource FieldLabel}" />
+                <Grid Grid.Row="2" Grid.Column="1">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <ComboBox IsEditable="True" ItemsSource="{Binding Tags}" Text="{Binding Tag, UpdateSourceTrigger=PropertyChanged}"
+                              ToolTip="Tags and their colours are defined in settings.json → tags" />
+                    <TextBlock Grid.Column="1" Text="Safe Mode" Style="{StaticResource FieldLabel}" Margin="16,0,12,0" />
+                    <ComboBox Grid.Column="2" ItemsSource="{x:Static local:ConnectionFormViewModel.SafeModeLevels}"
+                              SelectedValuePath="Value" DisplayMemberPath="Label" SelectedValue="{Binding SafeMode}" />
+                </Grid>
+
+                <TextBlock Grid.Row="3" Grid.ColumnSpan="2" Text="SERVER" Style="{StaticResource SectionHeader}" />
+
+                <TextBlock Grid.Row="4" Text="Host" Style="{StaticResource FieldLabel}" />
+                <Grid Grid.Row="4" Grid.Column="1">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="80" />
+                    </Grid.ColumnDefinitions>
+                    <TextBox Text="{Binding Host, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Grid.Column="1" Text="Port" Style="{StaticResource FieldLabel}" Margin="16,0,12,0" />
+                    <TextBox Grid.Column="2" Text="{Binding Port, UpdateSourceTrigger=PropertyChanged}" />
+                </Grid>
+
+                <TextBlock Grid.Row="5" Text="User" Style="{StaticResource FieldLabel}" />
+                <TextBox Grid.Row="5" Grid.Column="1" Text="{Binding User, UpdateSourceTrigger=PropertyChanged}" />
+
+                <TextBlock Grid.Row="6" Text="Password" Style="{StaticResource FieldLabel}" />
+                <Grid Grid.Row="6" Grid.Column="1">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="200" />
+                    </Grid.ColumnDefinitions>
+                    <PasswordBox infra:PasswordBoxAssist.Password="{Binding Password, Mode=TwoWay}" IsEnabled="{Binding IsPasswordEnabled}" />
+                    <ComboBox Grid.Column="1" Margin="6,3,0,3" ItemsSource="{x:Static local:ConnectionFormViewModel.PasswordModes}"
+                              SelectedValuePath="Value" DisplayMemberPath="Label" SelectedValue="{Binding PasswordMode}" />
+                </Grid>
+
+                <TextBlock Grid.Row="7" Text="Command" Style="{StaticResource FieldLabel}"
+                           Visibility="{Binding IsPasswordCommand, Converter={x:Static infra:BoolToVisibilityConverter.Instance}}" />
+                <TextBox Grid.Row="7" Grid.Column="1" Text="{Binding PasswordCommand, UpdateSourceTrigger=PropertyChanged}"
+                         FontFamily="{StaticResource MonoFont}" ToolTip="Runs on connect; trimmed stdout is the password (e.g. az account get-access-token …)"
+                         Visibility="{Binding IsPasswordCommand, Converter={x:Static infra:BoolToVisibilityConverter.Instance}}" />
+
+                <TextBlock Grid.Row="8" Text="Database" Style="{StaticResource FieldLabel}" />
+                <TextBox Grid.Row="8" Grid.Column="1" Text="{Binding Database, UpdateSourceTrigger=PropertyChanged}" />
+
+                <TextBlock Grid.Row="9" Grid.ColumnSpan="2" Text="SSL" Style="{StaticResource SectionHeader}" />
+
+                <TextBlock Grid.Row="10" Text="SSL mode" Style="{StaticResource FieldLabel}" />
+                <ComboBox Grid.Row="10" Grid.Column="1" Width="200" HorizontalAlignment="Left"
+                          ItemsSource="{x:Static local:ConnectionFormViewModel.SslModes}"
+                          SelectedValuePath="Value" DisplayMemberPath="Label" SelectedValue="{Binding SslMode}" />
+
+                <TextBlock Grid.Row="11" Text="Client key" Style="{StaticResource FieldLabel}" />
+                <DockPanel Grid.Row="11" Grid.Column="1">
+                    <Button DockPanel.Dock="Right" Style="{StaticResource BrowseButton}" Content="Client Key…" CommandParameter="sslKey" />
+                    <TextBox Text="{Binding SslClientKeyFile, UpdateSourceTrigger=PropertyChanged}" />
+                </DockPanel>
+
+                <TextBlock Grid.Row="12" Text="Client cert" Style="{StaticResource FieldLabel}" />
+                <DockPanel Grid.Row="12" Grid.Column="1">
+                    <Button DockPanel.Dock="Right" Style="{StaticResource BrowseButton}" Content="Client Cert…" CommandParameter="sslCert" />
+                    <TextBox Text="{Binding SslClientCertFile, UpdateSourceTrigger=PropertyChanged}" />
+                </DockPanel>
+
+                <TextBlock Grid.Row="13" Text="CA cert" Style="{StaticResource FieldLabel}" />
+                <DockPanel Grid.Row="13" Grid.Column="1">
+                    <Button DockPanel.Dock="Right" Style="{StaticResource BrowseButton}" Content="CA Cert…" CommandParameter="sslRoot" />
+                    <TextBox Text="{Binding SslRootCertFile, UpdateSourceTrigger=PropertyChanged}" />
+                </DockPanel>
+
+                <CheckBox Grid.Row="14" Grid.Column="1" Content="Over SSH" IsChecked="{Binding SshEnabled}" Margin="0,14,0,4" FontWeight="SemiBold" />
+
+                <Grid Grid.Row="15" Grid.ColumnSpan="2"
+                      Visibility="{Binding SshEnabled, Converter={x:Static infra:BoolToVisibilityConverter.Instance}}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="130" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Text="SSH host" Style="{StaticResource FieldLabel}" />
+                    <Grid Grid.Column="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="80" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox Text="{Binding SshHost, UpdateSourceTrigger=PropertyChanged}" />
+                        <TextBlock Grid.Column="1" Text="Port" Style="{StaticResource FieldLabel}" Margin="16,0,12,0" />
+                        <TextBox Grid.Column="2" Text="{Binding SshPort, UpdateSourceTrigger=PropertyChanged}" />
+                    </Grid>
+
+                    <TextBlock Grid.Row="1" Text="SSH user" Style="{StaticResource FieldLabel}" />
+                    <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding SshUser, UpdateSourceTrigger=PropertyChanged}" />
+
+                    <TextBlock Grid.Row="2" Text="SSH password" Style="{StaticResource FieldLabel}" />
+                    <Grid Grid.Row="2" Grid.Column="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="200" />
+                        </Grid.ColumnDefinitions>
+                        <PasswordBox infra:PasswordBoxAssist.Password="{Binding SshPassword, Mode=TwoWay}" IsEnabled="{Binding IsSshPasswordEnabled}" />
+                        <ComboBox Grid.Column="1" Margin="6,3,0,3" ItemsSource="{x:Static local:ConnectionFormViewModel.SshPasswordModes}"
+                                  SelectedValuePath="Value" DisplayMemberPath="Label" SelectedValue="{Binding SshPasswordMode}"
+                                  IsEnabled="{Binding SshUseKey, Converter={x:Static infra:InverseBoolConverter.Instance}}" />
+                    </Grid>
+
+                    <CheckBox Grid.Row="3" Grid.Column="1" Content="Use SSH key" IsChecked="{Binding SshUseKey}" Margin="0,6" />
+
+                    <TextBlock Grid.Row="4" Text="Private key" Style="{StaticResource FieldLabel}"
+                               Visibility="{Binding SshUseKey, Converter={x:Static infra:BoolToVisibilityConverter.Instance}}" />
+                    <DockPanel Grid.Row="4" Grid.Column="1" Visibility="{Binding SshUseKey, Converter={x:Static infra:BoolToVisibilityConverter.Instance}}">
+                        <Button DockPanel.Dock="Right" Style="{StaticResource BrowseButton}" Content="Import private key…" CommandParameter="sshKey" />
+                        <TextBox Text="{Binding SshKeyFile, UpdateSourceTrigger=PropertyChanged}"
+                                 ToolTip="Blank: ~/.ssh/config IdentityFile, then the default ~/.ssh/id_* keys" />
+                    </DockPanel>
+
+                    <TextBlock Grid.Row="5" Text="Key passphrase" Style="{StaticResource FieldLabel}"
+                               Visibility="{Binding SshUseKey, Converter={x:Static infra:BoolToVisibilityConverter.Instance}}" />
+                    <PasswordBox Grid.Row="5" Grid.Column="1" infra:PasswordBoxAssist.Password="{Binding SshPassphrase, Mode=TwoWay}"
+                                 Visibility="{Binding SshUseKey, Converter={x:Static infra:BoolToVisibilityConverter.Instance}}" />
+                </Grid>
+
+                <TextBlock Grid.Row="16" Grid.ColumnSpan="2" Text="BOOTSTRAP COMMANDS" Style="{StaticResource SectionHeader}" />
+                <TextBox Grid.Row="17" Grid.ColumnSpan="2" Text="{Binding Bootstrap, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True"
+                         AcceptsTab="True" MinHeight="80" MaxHeight="200" VerticalContentAlignment="Top" TextWrapping="NoWrap"
+                         VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" FontFamily="{StaticResource MonoFont}"
+                         ToolTip="SQL run on every physical (re)connect, e.g. SET search_path TO app, public;" />
+            </Grid>
+        </ScrollViewer>
+
+        <!-- Buttons and test result -->
+        <Border Grid.Row="2" BorderBrush="{DynamicResource c.app.border}" BorderThickness="0,1,0,0" Padding="24,10">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Button Content="Import from URL…" Command="{Binding ImportUrlCommand}" />
+                <Button Grid.Column="1" Content="Test" Margin="8,0,0,0" Command="{Binding TestCommand}" />
+                <TextBlock Grid.Column="2" Text="{Binding StatusMessage}" Margin="12,0" VerticalAlignment="Center" TextWrapping="Wrap"
+                           MaxHeight="60" TextTrimming="CharacterEllipsis" ToolTip="{Binding StatusMessage}">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="{DynamicResource c.app.mutedForeground}" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding StatusOk}" Value="True">
+                                    <Setter Property="Foreground" Value="{DynamicResource c.app.success}" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding StatusOk}" Value="False">
+                                    <Setter Property="Foreground" Value="{DynamicResource c.app.error}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+                <StackPanel Grid.Column="3" Orientation="Horizontal">
+                    <Button Content="Cancel" Command="{Binding CancelCommand}" IsCancel="True" />
+                    <Button Content="Save" Margin="8,0,0,0" Command="{Binding SaveCommand}" />
+                    <Button Content="Connect" Margin="8,0,0,0" Style="{StaticResource AccentButton}" Command="{Binding ConnectCommand}" IsDefault="True"
+                            Visibility="{Binding AllowConnect, Converter={x:Static infra:BoolToVisibilityConverter.Instance}}" />
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

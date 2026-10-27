@@ -1,4 +1,31 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>TablePlsu.App</RootNamespace>
+    <AssemblyName>TablePlsu.App</AssemblyName>
+    <Product>TablePlsu</Product>
+    <AssemblyTitle>TablePlsu</AssemblyTitle>
+    <Description>A fast PostgreSQL client for Windows.</Description>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <!-- Speed rules (architecture §Speed rules 2). The RID is supplied on publish: -r win-x64. -->
+  <PropertyGroup>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <TieredCompilation>true</TieredCompilation>
+    <TieredPGO>true</TieredPGO>
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <SelfContained>false</SelfContained>
+    <UseSystemResourceKeys>false</UseSystemResourceKeys>
+  </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\TablePlsu.Core\TablePlsu.Core.csproj" />
@@ -9,12 +36,8 @@
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
   </ItemGroup>
 
-  <PropertyGroup>
-    <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <UseWPF>true</UseWPF>
-  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="TablePlsu.App.Tests" />
+  </ItemGroup>
 
 </Project>

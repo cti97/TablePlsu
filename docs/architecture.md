@@ -62,6 +62,13 @@ tests/TablePlsu.Tests  — xUnit, references Core
 - `TabRequest { Kind, Schema, Name, ObjectKind, Sql, Pinned, InNewTab }`. The workspace calls `OpenTab(request)`, which applies the preview-tab reuse rules from the spec.
 - `IWorkspace` (what features see): `DbSession Session`, `ConnectionProfile Profile`, `string Database`, `MetadataCache Metadata`, `OpenTab`, `ActiveTab`, `Log(string)` to the console, `History`, `SafeMode.ConfirmAsync(statements)`.
 
+#### As built (App shell)
+- `FeatureContext` also has `Panels.Register(WorkspacePanel.Sidebar|Console|Right, ws => element)` for the layout slots, `OnWorkspaceOpened(ws => …)` (restore editor tabs here, before the connection finishes), `OnWindowCreated`, and `UseSafeMode(ws => ISafeModeGate)`.
+- Command handlers: `ctx.Commands.Register(id, Action<CommandContext>, Func<CommandContext,bool>? canExecute)`. `CommandContext` carries `Workspace`, `Target` (DataContext of the nearest element marked `infra:CommandScopes.Scope="Editor|Grid|Sidebar|FilterBar"`), `IsTextInputFocused`. The newest handler whose `canExecute` passes runs. A scope element's DataContext implementing `ICommandTarget` gets the command first; workspace-scope commands are forwarded to the active tab when it implements `ICommandTarget`.
+- Tabs: `TabViewModelBase` (`Kind`, `Schema`, `Name`, `Title`/`CustomTitle`, `IsDirty`, `IsPreview`, `HasPendingChanges`, `IsBusy`, `CreateView()`, `Save/CommitAsync/PreviewChanges/DiscardChanges/Reload/Flush/CanCloseNow/OnClosed`). Factories: `ctx.Tabs.Register(TabKinds.X, request => vm)` (or `(request, workspace) => vm`). Views are created once per tab and cached by `TabHost`.
+- `IWorkspace.Metadata` does not exist yet (Core `Metadata/` is not built): attach the cache through `IWorkspace.Services.GetOrAdd(() => …)` until it does.
+- Toolbar item ids are the `settings.toolbar.items` names; built-in templates are `tb.<id>` in `WorkspaceView.xaml`. Colours are `{DynamicResource c.<theme key>}` brushes (plus `color.<key>` Colors); shared styles live in `Shell/Styles.xaml`.
+
 ## Data flow: run query
 Editor → `StatementSplitter` → `SafeModePolicy` check → `DbSession.ExecuteAsync` streams `ResultBatch` per statement → the result tab VM appends rows to an `ObservableCollection<object?[]>` in batches (or a custom `BulkObservableCollection` that raises one Reset per batch) → the grid renders. History entry and console log are written per statement.
 
