@@ -236,4 +236,34 @@ public class MetadataLoaderIntegrationTests(ITestOutputHelper output)
         await cache.RefreshAsync();
         Assert.True(cache.FindSchema("sales")!.IsLoaded);
     }
+    [Fact]
+    public async Task Cache_refresh_does_not_drop_a_schema_loaded_while_it_was_running()
+    {
+        // UI flow "Ctrl+P orders" right after connect: the palette loads sales while the connect refresh is queued;
+        // the refresh (planned without sales) must not publish over the freshly loaded schema.
+        if (!TestPg.Available(output)) return;
+        using var tmp = new TempDir();
+        var (profile, secrets) = TestPg.Profile();
+        await using var s = new DbSession(profile, secrets);
+        await s.ConnectAsync();
+        using var cache = new MetadataCache(profile.Id, s.Database, s, tmp.Paths, new MetadataCacheOptions { LazySchemas = true });
+        await cache.RefreshAsync();
+        Assert.False(cache.FindSchema("sales")!.IsLoaded);
+
+        // Hold the metadata connection so both requests queue: the schema load first, then the refresh.
+        var block = s.WithMetadataConnectionAsync(async (conn, c) =>
+        {
+            await using var cmd = new Npgsql.NpgsqlCommand("select pg_sleep(0.4)", conn);
+            await cmd.ExecuteNonQueryAsync(c);
+            return 0;
+        });
+        await Task.Delay(50);
+        var load = cache.EnsureSchemaLoadedAsync("sales");
+        await Task.Delay(100);
+        var refresh = cache.RefreshAsync();
+        await Task.WhenAll(block, load, refresh);
+
+        Assert.True(cache.FindSchema("sales")!.IsLoaded, "the refresh published over the schema loaded while it was queued");
+        Assert.NotNull(cache.FindTable("sales", "orders"));
+    }
 }

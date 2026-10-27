@@ -124,13 +124,13 @@
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="80" />
                     </Grid.ColumnDefinitions>
-                    <TextBox Text="{Binding Host, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBox x:Name="HostBox" Text="{Binding Host, UpdateSourceTrigger=PropertyChanged}" />
                     <TextBlock Grid.Column="1" Text="Port" Style="{StaticResource FieldLabel}" Margin="16,0,12,0" />
-                    <TextBox Grid.Column="2" Text="{Binding Port, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBox Grid.Column="2" x:Name="PortBox" Text="{Binding Port, UpdateSourceTrigger=PropertyChanged}" />
                 </Grid>
 
                 <TextBlock Grid.Row="5" Text="User" Style="{StaticResource FieldLabel}" />
-                <TextBox Grid.Row="5" Grid.Column="1" Text="{Binding User, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBox Grid.Row="5" Grid.Column="1" x:Name="UserBox" Text="{Binding User, UpdateSourceTrigger=PropertyChanged}" />
 
                 <TextBlock Grid.Row="6" Text="Password" Style="{StaticResource FieldLabel}" />
                 <Grid Grid.Row="6" Grid.Column="1">
@@ -139,7 +139,7 @@
                         <ColumnDefinition Width="200" />
                     </Grid.ColumnDefinitions>
                     <PasswordBox infra:PasswordBoxAssist.Password="{Binding Password, Mode=TwoWay}" IsEnabled="{Binding IsPasswordEnabled}" />
-                    <ComboBox Grid.Column="1" Margin="6,3,0,3" ItemsSource="{x:Static local:ConnectionFormViewModel.PasswordModes}"
+                    <ComboBox Grid.Column="1" x:Name="PasswordModeBox" Margin="6,3,0,3" ItemsSource="{x:Static local:ConnectionFormViewModel.PasswordModes}"
                               SelectedValuePath="Value" DisplayMemberPath="Label" SelectedValue="{Binding PasswordMode}" />
                 </Grid>
 
@@ -150,7 +150,7 @@
                          Visibility="{Binding IsPasswordCommand, Converter={x:Static infra:BoolToVisibilityConverter.Instance}}" />
 
                 <TextBlock Grid.Row="8" Text="Database" Style="{StaticResource FieldLabel}" />
-                <TextBox Grid.Row="8" Grid.Column="1" Text="{Binding Database, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBox Grid.Row="8" Grid.Column="1" x:Name="DatabaseBox" Text="{Binding Database, UpdateSourceTrigger=PropertyChanged}" />
 
                 <TextBlock Grid.Row="9" Grid.ColumnSpan="2" Text="SSL" Style="{StaticResource SectionHeader}" />
 
@@ -254,9 +254,9 @@
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <Button Content="Import from URL…" Command="{Binding ImportUrlCommand}" />
-                <Button Grid.Column="1" Content="Test" Margin="8,0,0,0" Command="{Binding TestCommand}" />
-                <TextBlock Grid.Column="2" Text="{Binding StatusMessage}" Margin="12,0" VerticalAlignment="Center" TextWrapping="Wrap"
+                <Button x:Name="ImportUrlButton" Content="Import from URL…" Command="{Binding ImportUrlCommand}" />
+                <Button Grid.Column="1" x:Name="TestButton" Content="Test" Margin="8,0,0,0" Command="{Binding TestCommand}" />
+                <TextBlock Grid.Column="2" x:Name="FormStatus" Text="{Binding StatusMessage}" Margin="12,0" VerticalAlignment="Center" TextWrapping="Wrap"
                            MaxHeight="60" TextTrimming="CharacterEllipsis" ToolTip="{Binding StatusMessage}">
                     <TextBlock.Style>
                         <Style TargetType="TextBlock">
@@ -274,7 +274,7 @@
                 </TextBlock>
                 <StackPanel Grid.Column="3" Orientation="Horizontal">
                     <Button Content="Cancel" Command="{Binding CancelCommand}" IsCancel="True" />
-                    <Button Content="Save" Margin="8,0,0,0" Command="{Binding SaveCommand}" />
+                    <Button x:Name="SaveButton" Content="Save" Margin="8,0,0,0" Command="{Binding SaveCommand}" />
                     <Button Content="Connect" Margin="8,0,0,0" Style="{StaticResource AccentButton}" Command="{Binding ConnectCommand}" IsDefault="True"
                             Visibility="{Binding AllowConnect, Converter={x:Static infra:BoolToVisibilityConverter.Instance}}" />
                 </StackPanel>
