@@ -27,6 +27,7 @@ public partial class SqlEditorView : UserControl, ISqlEditorView
     private readonly SearchPanel _search;
     private readonly CurrentStatementRenderer _currentStatement;
     private readonly ErrorUnderlineRenderer _errorUnderline;
+    private readonly LineSpacingGenerator _lineSpacing = new();
     private SqlEditorTabViewModel? _vm;
     private bool _restored;
     private bool _completionAttached;
@@ -60,6 +61,7 @@ public partial class SqlEditorView : UserControl, ISqlEditorView
         _errorUnderline = new ErrorUnderlineRenderer(view);
         view.BackgroundRenderers.Add(_currentStatement);
         view.BackgroundRenderers.Add(_errorUnderline);
+        view.ElementGenerators.Add(_lineSpacing);
 
         area.Caret.PositionChanged += (_, _) =>
         {
@@ -92,6 +94,9 @@ public partial class SqlEditorView : UserControl, ISqlEditorView
     public ICSharpCode.AvalonEdit.TextEditor TextEditor => Editor;
 
     public Features.Results.ResultGrid ResultGrid => Grid;
+
+    /// <summary>editor.highlightCurrentQuery as applied (tests).</summary>
+    internal bool HighlightsCurrentQuery => _highlightCurrent;
 
     // ---- view-model wiring --------------------------------------------------------------------------------------
 
@@ -248,6 +253,11 @@ public partial class SqlEditorView : UserControl, ISqlEditorView
         Editor.Options.IndentationSize = s.TabSize;
         Editor.Options.ConvertTabsToSpaces = s.InsertSpaces;
         _highlightCurrent = s.HighlightCurrentQuery;
+        if (!_lineSpacing.Factor.Equals(s.LineHeight))
+        {
+            _lineSpacing.Factor = s.LineHeight;
+            Editor.TextArea.TextView.Redraw();
+        }
         Editor.TextArea.TextView.InvalidateLayer(KnownLayer.Background);
     }
 

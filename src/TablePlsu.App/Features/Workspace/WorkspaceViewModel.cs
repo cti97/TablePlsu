@@ -61,6 +61,7 @@ public sealed partial class WorkspaceViewModel : ObservableObject, IWorkspace, I
         Metadata = new MetadataCache(profile.Id, Database, Session, AppServices.IsInitialized ? AppServices.Paths : AppPaths.Current,
             new MetadataCacheOptions { IncludeSystemSchemas = settings.Sidebar.LoadSystemSchemas, LazySchemas = settings.Sidebar.LazyLoadSchemas });
         Metadata.LoadCachedAsync().Forget();
+        if (AppServices.IsInitialized) AppServices.SettingsChanged += OnSettingsChanged;
         Tabs = new ReadOnlyObservableCollection<TabViewModelBase>(_tabs);
         _tabs.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasTabs));
 
@@ -525,7 +526,26 @@ public sealed partial class WorkspaceViewModel : ObservableObject, IWorkspace, I
         Metadata.Dispose();
         Session.StateChanged -= OnSessionStateChanged;
         Session.Log -= OnSessionLog;
+        AppServices.SettingsChanged -= OnSettingsChanged;
         return Task.Run(async () => await Session.DisposeAsync().ConfigureAwait(false));
+    }
+
+    /// <summary>
+    /// Session-level settings follow settings.json live: connections.keepAlive, and sidebar.loadSystemSchemas /
+    /// sidebar.lazyLoadSchemas (a change reloads the metadata when connected).
+    /// </summary>
+    private void OnSettingsChanged(object? sender, SettingsChangedEventArgs e)
+    {
+        if (_closed) return;
+        Session.SetKeepAlive(e.Settings.Connections.KeepAlive);
+        var options = new MetadataCacheOptions
+        {
+            IncludeSystemSchemas = e.Settings.Sidebar.LoadSystemSchemas,
+            LazySchemas = e.Settings.Sidebar.LazyLoadSchemas,
+        };
+        if (Metadata.Options == options) return;
+        Metadata.Options = options;
+        if (State == DbSessionState.Connected) _ = RefreshMetadata();
     }
 
     public async ValueTask DisposeAsync() => await CloseAsync().ConfigureAwait(false);

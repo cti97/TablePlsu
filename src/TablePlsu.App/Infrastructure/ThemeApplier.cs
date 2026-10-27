@@ -84,7 +84,32 @@ public sealed class ThemeApplier
             target["c." + key] = brush;
             target["color." + key] = color;
         }
+        // WPF and AvalonEdit default templates (search panel, scroll viewer corner, default list/grid selection, menus)
+        // use the Windows system brushes, which stay light in a dark theme: map them onto the theme too.
+        foreach (var (systemKey, themeKey) in SystemBrushes)
+            if (target["c." + themeKey] is Brush brush) target[systemKey] = brush;
     }
+
+    private static readonly (ResourceKey SystemKey, string ThemeKey)[] SystemBrushes =
+    [
+        (SystemColors.WindowBrushKey, "app.window"),
+        (SystemColors.WindowTextBrushKey, "app.windowForeground"),
+        (SystemColors.ControlBrushKey, "app.window"),
+        (SystemColors.ControlTextBrushKey, "app.windowForeground"),
+        (SystemColors.ControlLightBrushKey, "app.border"),
+        (SystemColors.ControlDarkBrushKey, "app.border"),
+        (SystemColors.WindowFrameBrushKey, "app.border"),
+        (SystemColors.ActiveBorderBrushKey, "app.border"),
+        (SystemColors.GrayTextBrushKey, "app.mutedForeground"),
+        (SystemColors.HighlightBrushKey, "app.sidebarSelection"),
+        (SystemColors.HighlightTextBrushKey, "app.windowForeground"),
+        (SystemColors.InactiveSelectionHighlightBrushKey, "app.sidebarSelection"),
+        (SystemColors.InactiveSelectionHighlightTextBrushKey, "app.windowForeground"),
+        (SystemColors.MenuBrushKey, "app.window"),
+        (SystemColors.MenuTextBrushKey, "app.windowForeground"),
+        (SystemColors.InfoBrushKey, "app.window"),
+        (SystemColors.InfoTextBrushKey, "app.windowForeground"),
+    ];
 
     /// <summary>Parses "#RRGGBB" style text into a frozen brush (null when invalid). Used for connection and tag colours.</summary>
     public static SolidColorBrush? ParseBrush(string? text)

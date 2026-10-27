@@ -54,6 +54,7 @@ public sealed partial class TableTabViewModel : TabViewModelBase, ICommandTarget
         ToolTip = Schema + "." + Name;
         IsPreview = !request.Pinned;
         PageSize = AppServices.IsInitialized ? AppServices.Current.Table.PageSize : 300;
+        if (AppServices.IsInitialized) AppServices.SettingsChanged += OnSettingsChanged;
         Filter.AppliedChanged += (_, _) =>
         {
             Offset = 0;
@@ -193,8 +194,17 @@ public sealed partial class TableTabViewModel : TabViewModelBase, ICommandTarget
         if (IsActive) Reload();
     }
 
+    /// <summary>table.pageSize changed: follow it (from the next page load) unless the user set this tab's limit.</summary>
+    private void OnSettingsChanged(object? sender, TablePlsu.Core.Settings.SettingsChangedEventArgs e)
+    {
+        if (!_pageSizeCustomized) PageSize = e.Settings.Table.PageSize;
+    }
+
+    private bool _pageSizeCustomized;
+
     public override void OnClosed(TabCloseReason reason)
     {
+        AppServices.SettingsChanged -= OnSettingsChanged;
         Workspace.StateChanged -= OnStateChanged;
         Workspace.ReloadRequested -= OnReloadRequested;
         _loadCts?.Cancel();
@@ -470,6 +480,7 @@ public sealed partial class TableTabViewModel : TabViewModelBase, ICommandTarget
     public void GoTo(int limit, long offset)
     {
         PageSize = Math.Clamp(limit, 1, 1_000_000);
+        _pageSizeCustomized = true;
         Offset = Math.Max(0, offset);
         Load();
     }

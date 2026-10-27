@@ -20,6 +20,16 @@ public static class GridResources
 
     private static bool _initialized;
 
+    /// <summary>Tests (no Application): the dictionary <see cref="Apply"/> writes to instead of Application.Resources.</summary>
+    internal static ResourceDictionary? TestTarget { get; set; }
+
+    /// <summary>Tests: forget the one-time subscription so <see cref="EnsureInitialized"/> subscribes to a fresh AppServices.</summary>
+    internal static void ResetForTests()
+    {
+        _initialized = false;
+        Changed = null;
+    }
+
     /// <summary>Raised (UI thread) after the resources and formatter were updated from settings.</summary>
     public static event EventHandler? Changed;
 
@@ -36,7 +46,7 @@ public static class GridResources
     {
         var g = AppServices.IsInitialized ? AppServices.Current.Grid : new GridSettings();
         CellFormatter.Current = CellFormatter.FromSettings(g);
-        if (Application.Current?.Resources is { } res) ApplyTo(res, g);
+        if ((TestTarget ?? Application.Current?.Resources) is { } res) ApplyTo(res, g);
         Changed?.Invoke(null, EventArgs.Empty);
     }
 

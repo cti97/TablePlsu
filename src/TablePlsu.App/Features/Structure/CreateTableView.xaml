@@ -8,13 +8,6 @@
              Foreground="{DynamicResource c.app.windowForeground}">
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
-        <Style x:Key="HeaderStyle" TargetType="DataGridColumnHeader">
-            <Setter Property="Background" Value="{DynamicResource c.grid.headerBackground}" />
-            <Setter Property="Foreground" Value="{DynamicResource c.grid.headerForeground}" />
-            <Setter Property="BorderBrush" Value="{DynamicResource c.grid.lines}" />
-            <Setter Property="BorderThickness" Value="0,0,1,1" />
-            <Setter Property="Padding" Value="6,4" />
-        </Style>
         <Style x:Key="CellStyle" TargetType="DataGridCell">
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderThickness" Value="0" />
@@ -134,7 +127,6 @@
                       HorizontalGridLinesBrush="{DynamicResource c.grid.lines}"
                       VerticalGridLinesBrush="{DynamicResource c.grid.lines}"
                       BorderThickness="0"
-                      ColumnHeaderStyle="{StaticResource HeaderStyle}"
                       CellStyle="{StaticResource CellStyle}">
                 <DataGrid.Columns>
                     <DataGridTemplateColumn Header="column__name" Width="200">

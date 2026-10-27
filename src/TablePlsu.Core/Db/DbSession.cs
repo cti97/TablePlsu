@@ -50,7 +50,10 @@ public sealed class DbSession : IAsyncDisposable
         _secrets = secrets;
         Database = string.IsNullOrEmpty(database) ? profile.Database : database;
         _options = options ?? new DbSessionOptions();
+        _keepAlive = _options.KeepAlive;
     }
+
+    private volatile bool _keepAlive;
 
     public ConnectionProfile Profile { get; }
     public string Database { get; }
@@ -59,6 +62,26 @@ public sealed class DbSession : IAsyncDisposable
     public string? LastError { get; private set; }
     public bool IsBusy => Volatile.Read(ref _busy) != 0;
     public bool IsTunnelled => _tunnel is not null;
+
+    /// <summary>settings.connections.keepAlive as currently applied to this session.</summary>
+    public bool KeepAliveEnabled => _keepAlive;
+
+    /// <summary>Turns the keep-alive ping on or off for this session (settings.connections.keepAlive changed live).</summary>
+    public void SetKeepAlive(bool enabled)
+    {
+        if (_keepAlive == enabled) return;
+        _keepAlive = enabled;
+        if (!enabled)
+        {
+            var cts = Interlocked.Exchange(ref _keepAliveCts, null);
+            cts?.Cancel();
+            cts?.Dispose();
+        }
+        else if (_state == DbSessionState.Connected && _keepAliveCts is null)
+        {
+            StartKeepAlive();
+        }
+    }
 
     /// <summary>The pooled data source (valid while connected). Use <see cref="OpenConnectionAsync"/> for extra connections.</summary>
     public NpgsqlDataSource DataSource => _dataSource ?? throw new InvalidOperationException("Not connected.");
@@ -468,7 +491,7 @@ public sealed class DbSession : IAsyncDisposable
 
     private void StartKeepAlive()
     {
-        if (!_options.KeepAlive || _options.KeepAliveInterval <= TimeSpan.Zero) return;
+        if (!_keepAlive || _options.KeepAliveInterval <= TimeSpan.Zero) return;
         var cts = new CancellationTokenSource();
         _keepAliveCts = cts;
         _ = Task.Run(async () =>
@@ -488,9 +511,9 @@ public sealed class DbSession : IAsyncDisposable
 
     private async Task DisconnectCoreAsync()
     {
-        _keepAliveCts?.Cancel();
-        _keepAliveCts?.Dispose();
-        _keepAliveCts = null;
+        var keepAlive = Interlocked.Exchange(ref _keepAliveCts, null);
+        keepAlive?.Cancel();
+        keepAlive?.Dispose();
 
         if (_queryConn is not null)
         {
