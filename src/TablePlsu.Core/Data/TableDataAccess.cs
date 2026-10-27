@@ -4,8 +4,14 @@ using TablePlsu.Core.Db;
 
 namespace TablePlsu.Core.Data;
 
-/// <summary>One page of table data.</summary>
-public sealed record TablePage(IReadOnlyList<ResultColumn> Columns, List<object?[]> Rows, TimeSpan Elapsed);
+/// <summary>
+/// One page of table data. <see cref="KeyTexts"/> (aligned with <see cref="Rows"/>) holds the primary-key values as the
+/// server's text when the query asked for them (<see cref="TableQuery.KeyColumns"/>), else null.
+/// </summary>
+public sealed record TablePage(IReadOnlyList<ResultColumn> Columns, List<object?[]> Rows, TimeSpan Elapsed)
+{
+    public List<string?[]>? KeyTexts { get; init; }
+}
 
 /// <summary>Outcome of <see cref="TableDataAccess.CommitAsync"/>.</summary>
 public sealed record CommitResult
@@ -30,17 +36,24 @@ public static class TableDataAccess
         await using var cmd = spec.CreateCommand(conn);
         cmd.CommandTimeout = commandTimeoutSeconds;
         await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
-        var columns = new ResultColumn[reader.FieldCount];
+        var keyCount = Math.Clamp(spec.KeyTextColumns, 0, reader.FieldCount);
+        var columns = new ResultColumn[reader.FieldCount - keyCount];
         for (var c = 0; c < columns.Length; c++)
             columns[c] = new ResultColumn(c, reader.GetName(c), reader.GetDataTypeName(c), reader.GetDataTypeOID(c));
         var rows = new List<object?[]>();
+        var keys = keyCount > 0 ? new List<string?[]>() : null;
         while (await reader.ReadAsync(ct).ConfigureAwait(false))
         {
             var row = new object?[columns.Length];
             for (var c = 0; c < row.Length; c++) row[c] = ReadValue(reader, c);
             rows.Add(row);
+            if (keys is null) continue;
+            var key = new string?[keyCount];
+            for (var k = 0; k < keyCount; k++)
+                key[k] = reader.IsDBNull(columns.Length + k) ? null : reader.GetString(columns.Length + k);
+            keys.Add(key);
         }
-        return new TablePage(columns, rows, sw.Elapsed);
+        return new TablePage(columns, rows, sw.Elapsed) { KeyTexts = keys };
     }
 
     public static async Task<long> CountAsync(NpgsqlConnection conn, SqlCommandSpec countSpec, int commandTimeoutSeconds = 0, CancellationToken ct = default)

@@ -39,6 +39,8 @@ public sealed partial class TableTabViewModel : TabViewModelBase, ICommandTarget
     private CancellationTokenSource? _loadCts;
     private CancellationTokenSource? _countCts;
     private List<object?[]> _pageRows = [];
+    private List<string?[]>? _pageKeyTexts;
+    private IReadOnlyList<string> _pageKeyColumns = [];
     private bool _loadWhenConnected;
     private bool _committing;
     private bool _metadataLoading;
@@ -251,7 +253,7 @@ public sealed partial class TableTabViewModel : TabViewModelBase, ICommandTarget
                 return await TableDataAccess.LoadPageAsync(conn, spec, timeout, ct).ConfigureAwait(false);
             }, ct).ConfigureAwait(true);
             if (ct.IsCancellationRequested) return;
-            ApplyPage(page);
+            ApplyPage(page, query.KeyColumns);
             if (recount || TotalRows is null) UpdateRowCountAsync(query, force: false).Forget();
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -307,15 +309,21 @@ public sealed partial class TableTabViewModel : TabViewModelBase, ICommandTarget
         Sorts = Sorts,
         Limit = PageSize,
         Offset = Offset,
+        KeyColumns = EditKeyColumns,
     };
 
-    private void ApplyPage(TablePage page)
+    /// <summary>The primary key the page query fetches as exact text (rows are identified by it), or none.</summary>
+    private IReadOnlyList<string> EditKeyColumns => IsTableKind && Info is { HasPrimaryKey: true } info ? info.PrimaryKey : [];
+
+    private void ApplyPage(TablePage page, IReadOnlyList<string> keyColumns)
     {
         if (Columns is null || !SameColumns(Columns, page.Columns)) Columns = page.Columns;
         if (Info is null) Filter.SetColumns(page.Columns.Select(c => c.Name));
-        SetupEditing(page.Columns);
         _pageRows = page.Rows;
-        Pending?.AttachRows(page.Rows);
+        _pageKeyTexts = page.KeyTexts;
+        _pageKeyColumns = page.KeyTexts is null ? [] : keyColumns;
+        SetupEditing(page.Columns);
+        AttachPendingRows();
         Rows.ReplaceAll(Pending is null ? page.Rows : page.Rows.Concat(Pending.InsertedRows));
         LoadedCount = page.Rows.Count;
         CanNextPage = page.Rows.Count >= PageSize && (TotalRows is null || Offset + PageSize < TotalRows);
@@ -356,6 +364,13 @@ public sealed partial class TableTabViewModel : TabViewModelBase, ICommandTarget
         {
             keys = [.. Info.PrimaryKey.Select(IndexOfColumnIn(columns))];
             if (keys.Any(k => k < 0)) reason = "The primary key columns are not in the result, so editing is disabled.";
+            else if (!PageHasExactKeys)
+            {
+                // The page was fetched before the primary key was known: rows can only be addressed by their exact key
+                // text, so refetch it (with the keys) before allowing edits.
+                reason = "Loading row keys…";
+                if (!_pageKeyColumns.SequenceEqual(Info.PrimaryKey, StringComparer.Ordinal)) Load();
+            }
         }
         ReadOnlyReason = reason;
         IsEditable = reason is null;
@@ -369,7 +384,21 @@ public sealed partial class TableTabViewModel : TabViewModelBase, ICommandTarget
         DetachPending();
         Pending = new PendingChanges(columns.Count, keys);
         Pending.Changed += OnPendingChanged;
-        Pending.AttachRows(_pageRows);
+        AttachPendingRows();
+    }
+
+    /// <summary>True when the loaded rows carry the exact text of the current primary key (or there are no rows).</summary>
+    private bool PageHasExactKeys =>
+        _pageRows.Count == 0 || (_pageKeyTexts is not null && Info is not null && _pageKeyColumns.SequenceEqual(Info.PrimaryKey, StringComparer.Ordinal));
+
+    /// <summary>Registers the page rows with <see cref="Pending"/> by their exact key text (never by the lossy CLR values).</summary>
+    private void AttachPendingRows()
+    {
+        if (Pending is null) return;
+        if (PageHasExactKeys && _pageKeyTexts is not null && _pageKeyTexts.Count == _pageRows.Count && _pageKeyColumns.Count == Pending.KeyColumns.Count)
+            Pending.AttachRows(_pageRows, _pageKeyTexts);
+        else
+            Pending.AttachRows([], []);
     }
 
     private static Func<string, int> IndexOfColumnIn(IReadOnlyList<ResultColumn> columns) => name =>

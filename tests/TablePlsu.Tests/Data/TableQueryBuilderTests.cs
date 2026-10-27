@@ -151,8 +151,22 @@ public class TableQueryBuilderTests
     public void Raw_sql_is_inserted_verbatim()
     {
         var spec = TableQueryBuilder.BuildWhere(Q(FilterCondition.Raw("total > 100 and status = 'paid';")));
-        Assert.Equal("WHERE total > 100 and status = 'paid'", spec.Sql);
+        Assert.Equal("WHERE (total > 100 and status = 'paid'\n)", spec.Sql);
         Assert.Empty(spec.Parameters);
+    }
+
+    [Theory]
+    [InlineData("a = 1; DROP TABLE x")]
+    [InlineData("true); DELETE FROM t; SELECT (1")]
+    [InlineData("-- only a comment")]
+    public void Raw_sql_with_more_or_less_than_one_statement_is_rejected(string raw) =>
+        Assert.Throws<ArgumentException>(() => TableQueryBuilder.BuildSelect(Q(FilterCondition.Raw(raw))));
+
+    [Fact]
+    public void Raw_sql_semicolons_inside_strings_are_fine_and_trailing_comments_are_closed()
+    {
+        var spec = TableQueryBuilder.BuildSelect(Q(FilterCondition.Raw("status = 'a;b' -- note")) with { Limit = 10 });
+        Assert.EndsWith("WHERE (status = 'a;b' -- note\n) LIMIT 10", spec.Sql);
     }
 
     [Fact]

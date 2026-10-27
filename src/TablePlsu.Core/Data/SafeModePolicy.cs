@@ -107,8 +107,10 @@ public static class SafeModePolicy
                 case "INSERT" or "DELETE" or "MERGE" or "INTO" or "TRUNCATE":
                     return true;
                 case "UPDATE":
-                    // FOR UPDATE / FOR NO KEY UPDATE are row locks, not writes.
-                    if (i > 0 && words[i - 1] is "FOR" or "KEY") continue;
+                    // FOR UPDATE / FOR NO KEY UPDATE are row locks, not writes. Only the full phrase counts: "key" alone
+                    // is an ordinary (unreserved) name, e.g. "WITH x AS (SELECT * FROM key) UPDATE t …".
+                    if (i > 0 && words[i - 1] == "FOR") continue;
+                    if (i > 2 && words[i - 1] == "KEY" && words[i - 2] == "NO" && words[i - 3] == "FOR") continue;
                     return true;
             }
         }

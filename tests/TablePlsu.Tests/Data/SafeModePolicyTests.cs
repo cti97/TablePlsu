@@ -72,3 +72,39 @@ public class SafeModePolicyTests
     public void Lowering_from_safe_requires_password(SafeModeLevel from, SafeModeLevel to, bool expected) =>
         Assert.Equal(expected, SafeModePolicy.ChangeRequiresPassword(from, to));
 }
+
+/// <summary>Attempts to get a write classified as a read (each must need confirmation at the "except reads" levels).</summary>
+public class SafeModePolicyBypassTests
+{
+    [Theory]
+    // "key" is an unreserved word: a table called key right before a data-modifying UPDATE is not FOR NO KEY UPDATE.
+    [InlineData("WITH x AS (SELECT * FROM key) UPDATE t SET a = 1")]
+    [InlineData("WITH x AS (SELECT 1 AS key) UPDATE t SET a = 1")]
+    [InlineData("select 1; drop table x")]
+    [InlineData("SELECT 1 /* ; */ ; DELETE FROM t")]
+    [InlineData("select 'a\\'; drop table x; --'")]
+    [InlineData("SELECT E'\\\\'; DELETE FROM t; --'")]
+    [InlineData("select$$x$$; delete from t")]
+    [InlineData("/* hi */ DeLeTe FROM t")]
+    [InlineData("-- select\nDELETE FROM t")]
+    [InlineData("EXPLAIN (ANALYZE) DELETE FROM t")]
+    [InlineData("EXPLAIN (FORMAT JSON, ANALYZE TRUE) DELETE FROM t")]
+    [InlineData("EXPLAIN ANALYZE WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d")]
+    [InlineData("EXPLAIN ANALYZE SELECT * INTO t2 FROM t")]
+    [InlineData("EXPLAIN ANALYZE MERGE INTO t USING s ON true WHEN MATCHED THEN DELETE")]
+    [InlineData("SELECT * INTO TEMP t2 FROM t")]
+    [InlineData("TABLE t; TRUNCATE t")]
+    [InlineData("VALUES (1); DELETE FROM t")]
+    [InlineData("SHOW x; SET y = 1")]
+    [InlineData("select * from t where a = 'it''s'; delete from t")]
+    [InlineData("WITH a AS (SELECT 1 FOR UPDATE) UPDATE t SET a = 1")]
+    [InlineData("SELECT 1; DELETE FROM t")]
+    public void Writes_are_never_read_only(string sql) => Assert.False(SafeModePolicy.AllReadOnly([sql]));
+
+    [Theory]
+    [InlineData("SELECT * FROM t FOR NO KEY UPDATE")]
+    [InlineData("SELECT * FROM t FOR UPDATE OF t SKIP LOCKED")]
+    [InlineData("SELECT \"a\"\";delete from t;--\" FROM t")]
+    [InlineData("/* /* nested */ DELETE FROM t */ SELECT 1")]
+    public void Reads_stay_read_only(string sql) => Assert.True(SafeModePolicy.AllReadOnly([sql]));
+}
