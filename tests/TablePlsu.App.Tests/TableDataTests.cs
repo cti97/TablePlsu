@@ -13,6 +13,7 @@ using TablePlsu.App.Infrastructure;
 using TablePlsu.Core.Commands;
 using TablePlsu.Core.Connections;
 using TablePlsu.Core.Data;
+using TablePlsu.Core.Db;
 using Xunit.Abstractions;
 
 namespace TablePlsu.App.Tests;
@@ -428,6 +429,103 @@ public class TableTabViewModelTests(ITestOutputHelper output)
             tab.DiscardChanges();
             Assert.False(tab.HasPendingChanges);
             await WaitFor(() => !tab.IsBusy && tab.Rows.Count == 3);
+        }
+        finally
+        {
+            await ws.CloseAsync();
+            await Exec(admin, $"DROP TABLE IF EXISTS public.{table}");
+        }
+    }
+
+    [Fact]
+    public async Task Rows_are_addressed_by_exact_key_text_and_staging_is_locked_while_committing()
+    {
+        if (!TestPg.Available(output)) return;
+        var table = "td_key_" + Guid.NewGuid().ToString("N")[..10];
+        await using var admin = new NpgsqlConnection(TestPg.ConnectionString);
+        await admin.OpenAsync();
+        // Two keys the provider reads as the same IPAddress: only the exact key text tells them apart.
+        await Exec(admin, $"CREATE TABLE public.{table}(k inet PRIMARY KEY, v int NOT NULL DEFAULT 0, tag text); " +
+                          $"INSERT INTO public.{table} VALUES ('10.0.0.1/8', 0, 'target'), ('10.0.0.1', 0, 'twin')");
+        var ws = await ConnectAsync();
+        try
+        {
+            var tab = await OpenAsync(ws, "public", table);
+            await WaitFor(() => tab.IsEditable && !tab.IsBusy && tab.Rows.Count == 2);
+            Assert.Contains(tab.Rows, r => (string?)r[0] == "10.0.0.1/8"); // shown with its netmask
+            var target = tab.Rows.Single(r => (string?)r[2] == "target");
+            var twin = tab.Rows.Single(r => (string?)r[2] == "twin");
+            Assert.Equal("42", tab.CommitCellEdit(target, 1, "42"));
+
+            var commit = tab.CommitCoreAsync(showErrors: false);
+            // Mid-commit: nothing can be staged (a successful commit clears the staging area).
+            Assert.True(tab.IsCommitting);
+            Assert.True(tab.IsReadOnlyGrid);
+            Assert.False(tab.CanEditCell(twin, 1));
+            Assert.Equal(0, Convert.ToInt32(tab.CommitCellEdit(twin, 1, "7")));
+            Assert.Null(tab.InsertRow());
+            Assert.Equal(0, tab.PasteAsNewRows("1.2.3.4\t5", 0));
+            Assert.True(await commit);
+            Assert.False(tab.IsCommitting);
+
+            Assert.Equal(42, Convert.ToInt32(await Scalar(admin, $"SELECT v FROM public.{table} WHERE tag = 'target'")));
+            Assert.Equal(0, Convert.ToInt32(await Scalar(admin, $"SELECT v FROM public.{table} WHERE tag = 'twin'")));
+            Assert.Contains(ws.History.Load(ws.Profile.Id), h => h.Sql == $"UPDATE public.{table} SET v = '42' WHERE k = '10.0.0.1/8'");
+
+            // Delete the target by key: the twin survives.
+            await WaitFor(() => !tab.IsBusy && tab.Rows.Count == 2 && tab.IsEditable);
+            tab.Pending!.DeleteRow(tab.Rows.Single(r => (string?)r[2] == "target"));
+            Assert.True(await tab.CommitCoreAsync(showErrors: false));
+            Assert.Equal("twin", await Scalar(admin, $"SELECT string_agg(tag, ',') FROM public.{table}"));
+        }
+        finally
+        {
+            await ws.CloseAsync();
+            await Exec(admin, $"DROP TABLE IF EXISTS public.{table}");
+        }
+    }
+
+    [Fact]
+    public async Task Paste_maps_from_the_start_column_null_text_is_null_and_typed_timestamptz_is_utc()
+    {
+        if (!TestPg.Available(output)) return;
+        var table = "td_paste_" + Guid.NewGuid().ToString("N")[..10];
+        await using var admin = new NpgsqlConnection(TestPg.ConnectionString);
+        await admin.OpenAsync();
+        await Exec(admin, $"CREATE TABLE public.{table}(id serial PRIMARY KEY, name text, qty int, at timestamptz, b bytea); " +
+                          $"INSERT INTO public.{table}(name, qty, at, b) VALUES ('a', 1, '2024-01-01 10:00:00+00', decode(repeat('ab', 300), 'hex'))");
+        var ws = await ConnectAsync();
+        try
+        {
+            var tab = await OpenAsync(ws, "public", table);
+            await WaitFor(() => tab.IsEditable && !tab.IsBusy && tab.Rows.Count == 1);
+            var row = tab.Rows[0];
+
+            // Ctrl+V with the current cell in "name": fields map from there; NULL is SQL NULL, not the text 'NULL'.
+            Assert.Equal(1, tab.PasteAsNewRows("x\tNULL", startColumn: 1));
+            Assert.Equal($"INSERT INTO public.{table} (name, qty) VALUES ('x', NULL)", tab.GenerateStatements().Single().LiteralSql);
+            tab.Undo();
+            // Whole rows (one field per column) still map from the first column.
+            Assert.Equal(1, tab.PasteAsNewRows("\ty\t3\t\t", startColumn: 2));
+            Assert.Equal($"INSERT INTO public.{table} (name, qty) VALUES ('y', '3')", tab.GenerateStatements().Single().LiteralSql);
+            tab.Undo();
+
+            // Ctrl+Shift+V of NULL into a cell stages NULL.
+            Assert.Equal(1, tab.PasteIntoCells("NULL", (0, 1), []));
+            Assert.Null(row[1]);
+            tab.Undo();
+
+            // A typed zone-less timestamptz is the UTC wall time the grid shows.
+            tab.CommitCellEdit(row, 3, "2024-01-01 10:30:00");
+            Assert.EndsWith("SET at = '2024-01-01 10:30:00+00' WHERE id = '1'", tab.GenerateStatements().Single().LiteralSql);
+            tab.Undo();
+
+            // Duplicate does not write the truncated bytea preview back: that cell stays DEFAULT.
+            Assert.True(DbValueConverter.IsLossyPreview(row[4]));
+            tab.DuplicateRows([row]);
+            Assert.Equal($"INSERT INTO public.{table} (name, qty, at) VALUES ('a', 1, '2024-01-01 10:00:00+00')", tab.GenerateStatements().Single().LiteralSql);
+            Assert.True(await tab.CommitCoreAsync(showErrors: false));
+            Assert.Equal(1L, await Scalar(admin, $"SELECT count(*) FROM public.{table} WHERE b IS NULL AND name = 'a' AND at = '2024-01-01 10:00:00+00'"));
         }
         finally
         {

@@ -16,6 +16,9 @@ public sealed record SqlCommandSpec(string Sql, IReadOnlyList<object?> Parameter
     /// <summary>For UPDATE/DELETE by primary key: the number of rows the statement must affect (null = any).</summary>
     public int? ExpectedRows { get; init; }
 
+    /// <summary>For a table page SELECT: how many trailing result columns are the key columns' text forms (not shown).</summary>
+    public int KeyTextColumns { get; init; }
+
     public override string ToString() => LiteralSql;
 
     /// <summary>

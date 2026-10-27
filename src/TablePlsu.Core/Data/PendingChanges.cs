@@ -116,13 +116,24 @@ public sealed class PendingChanges
     /// Registers a freshly loaded page (replacing the previous one): remembers each row's key from its loaded values and
     /// writes staged cell edits into the arrays so they show again after paging or reload.
     /// </summary>
-    public void AttachRows(IEnumerable<object?[]> rows)
+    public void AttachRows(IEnumerable<object?[]> rows) => AttachRows(rows.ToList(), null);
+
+    /// <summary>
+    /// Registers a loaded page whose rows are identified by <paramref name="keyTexts"/>: the key columns' exact server text,
+    /// aligned with <paramref name="rows"/> (see <see cref="TableQuery.KeyColumns"/>). Null falls back to the loaded values.
+    /// </summary>
+    public void AttachRows(IReadOnlyList<object?[]> rows, IReadOnlyList<string?[]>? keyTexts)
     {
+        if (keyTexts is not null && keyTexts.Count != rows.Count)
+            throw new ArgumentException("One key per row is required.", nameof(keyTexts));
+        if (keyTexts is not null && keyTexts.Any(k => k.Length != _keyColumns.Length))
+            throw new ArgumentException("Each key needs one value per key column.", nameof(keyTexts));
         _attached.Clear();
         _keyOf.Clear();
-        foreach (var row in rows)
+        for (var i = 0; i < rows.Count; i++)
         {
-            var key = KeyFromValues(row);
+            var row = rows[i];
+            var key = keyTexts is null ? KeyFromValues(row) : new RowKey(keyTexts[i]);
             _keyOf[row] = key;
             _attached[key] = row;
             if (_updates.TryGetValue(key, out var u))

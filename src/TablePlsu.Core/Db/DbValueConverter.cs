@@ -22,6 +22,14 @@ public static class DbValueConverter
         _ => value,
     };
 
+    /// <summary>
+    /// True for display placeholders that are not the value itself: a truncated bytea preview or an "&lt;unreadable …&gt;"
+    /// marker. Such text must never be written back to the database (e.g. by Duplicate Row).
+    /// </summary>
+    public static bool IsLossyPreview(object? value) => value is string s
+        && ((s.StartsWith("\\x", StringComparison.Ordinal) && s.EndsWith(" bytes)", StringComparison.Ordinal) && s.Contains("… (", StringComparison.Ordinal))
+            || s.StartsWith("<unreadable ", StringComparison.Ordinal));
+
     public static string HexPreview(byte[] bytes)
     {
         var n = Math.Min(bytes.Length, MaxBinaryPreviewBytes);
@@ -86,6 +94,9 @@ public static class DbValueConverter
                 {
                     byte[] b => HexPreview(b),
                     bool b => b ? "t" : "f",
+                    // ISO text the server parses back to the same value (the culture-neutral default would be
+                    // "01/01/2024 10:00:00": no fraction, no zone, month/day order up to DateStyle).
+                    DateTime or DateTimeOffset or DateOnly or TimeOnly or TimeSpan => Data.PgText.Format(item),
                     IFormattable f => f.ToString(null, CultureInfo.InvariantCulture),
                     _ => item.ToString() ?? "",
                 };

@@ -335,8 +335,16 @@ public partial class TableTabView : UserControl, ITableDataView
     {
         if (_vm is null) return;
         CommitFocusedText();
-        var where = TableQueryBuilder.BuildWhere(_vm.BuildQuery() with { Filters = _vm.Filter.CheckedConditions(), Join = _vm.Filter.Join });
-        var text = string.IsNullOrEmpty(where.LiteralSql) ? "-- no filter" : where.LiteralSql;
+        string text;
+        try
+        {
+            var where = TableQueryBuilder.BuildWhere(_vm.BuildQuery() with { Filters = _vm.Filter.CheckedConditions(), Join = _vm.Filter.Join });
+            text = string.IsNullOrEmpty(where.LiteralSql) ? "-- no filter" : where.LiteralSql;
+        }
+        catch (ArgumentException ex)
+        {
+            text = "-- " + ex.Message;
+        }
         Dialogs.Info("Generated WHERE clause for the checked filters:", "Filter SQL", detail: text);
     }
 

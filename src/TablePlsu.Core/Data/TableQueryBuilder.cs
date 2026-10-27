@@ -30,12 +30,21 @@ public sealed record TableQuery
     /// <summary>LIMIT (null or ≤ 0 = none).</summary>
     public int? Limit { get; init; }
     public long Offset { get; init; }
+
+    /// <summary>
+    /// Primary-key columns of an editable table. <see cref="TableQueryBuilder.BuildSelect"/> appends each one's exact text
+    /// form (<c>k::text</c>) after the select list, so edits address rows by the server's own representation of the key.
+    /// The provider's CLR values are not lossless (inet drops its netmask, array elements and numerics get re-formatted…),
+    /// and a lossy key can make <c>WHERE pk = …</c> hit a different row.
+    /// </summary>
+    public IReadOnlyList<string> KeyColumns { get; init; } = [];
 }
 
 /// <summary>
 /// Builds the table data view's SQL: <c>SELECT cols FROM schema.table WHERE … ORDER BY … LIMIT n OFFSET m</c>.
 /// Filter values are always parameters (<c>$n</c>), never concatenated, except the Raw SQL filter which is inserted
-/// verbatim (wrapped in parentheses). Pattern operators escape LIKE wildcards in the value.
+/// verbatim (wrapped in parentheses and a line break; more than one statement is rejected with
+/// <see cref="ArgumentException"/>). Pattern operators escape LIKE wildcards in the value.
 /// </summary>
 public static class TableQueryBuilder
 {
@@ -46,6 +55,9 @@ public static class TableQueryBuilder
         var cols = q.SelectColumns ?? (q.Columns.Count > 0 ? q.Columns.Select(c => c.Name).ToList() : null);
         if (cols is null || cols.Count == 0) b.Append("*");
         else b.Append(string.Join(", ", cols.Select(SqlIdent.QuoteIfNeeded)));
+        // Aliased: a second output column named like the key would make ORDER BY "id" ambiguous.
+        for (var k = 0; k < q.KeyColumns.Count; k++)
+            b.Append(", ").AppendIdent(q.KeyColumns[k]).Append("::text AS ").Append(KeyTextAlias(k));
         b.Append(" FROM ").Append(SqlIdent.Qualified(q.Schema, q.Table));
         AppendWhere(b, q);
         if (q.Sorts.Count > 0)
@@ -55,8 +67,11 @@ public static class TableQueryBuilder
         }
         if (q.Limit is > 0) b.Append(" LIMIT ").Append(q.Limit.Value.ToString(CultureInfo.InvariantCulture));
         if (q.Offset > 0) b.Append(" OFFSET ").Append(q.Offset.ToString(CultureInfo.InvariantCulture));
-        return b.Build();
+        return b.Build() with { KeyTextColumns = q.KeyColumns.Count };
     }
+
+    /// <summary>Output name of the k-th key text column (unlikely to clash with a real column).</summary>
+    public static string KeyTextAlias(int k) => "\"__tablplsu_key_" + k.ToString(CultureInfo.InvariantCulture) + "\"";
 
     /// <summary><c>SELECT count(*) FROM schema.table WHERE …</c> (same filters, no sort/paging).</summary>
     public static SqlCommandSpec BuildCount(TableQuery q)
@@ -109,8 +124,15 @@ public static class TableQueryBuilder
         switch (f.Target)
         {
             case FilterTarget.RawSql:
-                b.Append(f.Value!.Trim().TrimEnd(';'));
+            {
+                // One condition only: a ';' would let the filter run a second statement (page loads have no Safe Mode
+                // gate), and a trailing "-- comment" must not swallow the ORDER BY / LIMIT that follows it.
+                var parts = StatementSplitter.Split(f.Value!);
+                if (parts.Count != 1)
+                    throw new ArgumentException("A Raw SQL filter must be a single condition (no ';' between statements).");
+                b.Append("(").Append(parts[0].Text).Append("\n)");
                 return;
+            }
             case FilterTarget.Column:
             {
                 var type = columns.FirstOrDefault(c => c.Name == f.Column)?.DataType;

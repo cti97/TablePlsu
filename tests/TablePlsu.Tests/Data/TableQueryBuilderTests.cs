@@ -151,8 +151,33 @@ public class TableQueryBuilderTests
     public void Raw_sql_is_inserted_verbatim()
     {
         var spec = TableQueryBuilder.BuildWhere(Q(FilterCondition.Raw("total > 100 and status = 'paid';")));
-        Assert.Equal("WHERE total > 100 and status = 'paid'", spec.Sql);
+        Assert.Equal("WHERE (total > 100 and status = 'paid'\n)", spec.Sql);
         Assert.Empty(spec.Parameters);
+    }
+
+    [Fact]
+    public void Key_columns_are_appended_as_aliased_text_so_order_by_stays_unambiguous()
+    {
+        var spec = TableQueryBuilder.BuildSelect(new TableQuery
+        {
+            Schema = "public", Table = "t", KeyColumns = ["id", "Part"], Sorts = [new("id", SortDirection.Asc)], Limit = 5,
+        });
+        Assert.Equal("SELECT *, id::text AS \"__tablplsu_key_0\", \"Part\"::text AS \"__tablplsu_key_1\" FROM public.t ORDER BY id ASC LIMIT 5", spec.Sql);
+        Assert.Equal(2, spec.KeyTextColumns);
+    }
+
+    [Theory]
+    [InlineData("a = 1; DROP TABLE x")]
+    [InlineData("true); DELETE FROM t; SELECT (1")]
+    [InlineData("-- only a comment")]
+    public void Raw_sql_with_more_or_less_than_one_statement_is_rejected(string raw) =>
+        Assert.Throws<ArgumentException>(() => TableQueryBuilder.BuildSelect(Q(FilterCondition.Raw(raw))));
+
+    [Fact]
+    public void Raw_sql_semicolons_inside_strings_are_fine_and_trailing_comments_are_closed()
+    {
+        var spec = TableQueryBuilder.BuildSelect(Q(FilterCondition.Raw("status = 'a;b' -- note")) with { Limit = 10 });
+        Assert.EndsWith("WHERE (status = 'a;b' -- note\n) LIMIT 10", spec.Sql);
     }
 
     [Fact]
