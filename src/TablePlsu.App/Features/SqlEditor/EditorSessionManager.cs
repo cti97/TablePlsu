@@ -37,11 +37,14 @@ public sealed class EditorSessionManager : IDisposable
         // serial queue below, so the store's own timer is effectively off.
         _store = new EditorSessionStore(paths, ws.Profile.Id, TimeSpan.FromHours(1), msg => ws.ConsoleLog.Add(msg, ConsoleEntryKind.Error));
         var stored = AppServices.IsInitialized ? AppServices.Connections.Get(ws.Profile.Id) : null;
-        _rowLimit = stored?.RowLimit ?? ws.Profile.RowLimit ?? Settings.Editor.DefaultRowLimit;
+        var remembered = stored?.RowLimit ?? ws.Profile.RowLimit;
+        _rowLimitRemembered = remembered is not null;
+        _rowLimit = remembered ?? Settings.Editor.DefaultRowLimit;
 
         if (ws.Tabs is INotifyCollectionChanged tabs) tabs.CollectionChanged += OnTabsChanged;
         ws.Closing += OnWorkspaceClosing;
         lock (Live) Live.Add(this);
+        if (AppServices.IsInitialized) AppServices.SettingsChanged += OnSettingsChanged;
     }
 
     private static readonly List<EditorSessionManager> Live = [];
@@ -95,6 +98,16 @@ public sealed class EditorSessionManager : IDisposable
         }
     }
 
+    private bool _rowLimitRemembered;
+
+    /// <summary>editor.defaultRowLimit changed: follow it until this connection has a row limit of its own.</summary>
+    private void OnSettingsChanged(object? sender, SettingsChangedEventArgs e)
+    {
+        if (_rowLimitRemembered || _disposed || e.Settings.Editor.DefaultRowLimit == _rowLimit) return;
+        _rowLimit = e.Settings.Editor.DefaultRowLimit;
+        RowLimitChanged?.Invoke(this, _rowLimit);
+    }
+
     /// <summary>The manager of <paramref name="ws"/> (created on first use).</summary>
     public static EditorSessionManager For(IWorkspace ws) =>
         ws.Services.GetOrAdd(() => new EditorSessionManager(ws, AppServices.IsInitialized ? AppServices.Paths : AppPaths.Current));
@@ -117,6 +130,7 @@ public sealed class EditorSessionManager : IDisposable
     {
         if (value == _rowLimit) return;
         _rowLimit = value;
+        _rowLimitRemembered = true;
         RowLimitChanged?.Invoke(this, value);
         if (!AppServices.IsInitialized) return;
         var stored = AppServices.Connections.Get(_ws.Profile.Id);
@@ -340,6 +354,7 @@ public sealed class EditorSessionManager : IDisposable
         _sessionTimer?.Stop();
         if (_ws.Tabs is INotifyCollectionChanged tabs) tabs.CollectionChanged -= OnTabsChanged;
         _ws.Closing -= OnWorkspaceClosing;
+        AppServices.SettingsChanged -= OnSettingsChanged;
         WaitQueue();
         _disposed = true;
         _store.Dispose();

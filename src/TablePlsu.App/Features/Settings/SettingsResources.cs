@@ -28,6 +28,16 @@ public static class SettingsResources
     public const string SidebarRowHeightKey = "sidebar.rowHeight";
 
     private static bool _initialized;
+
+    /// <summary>Tests (no Application): the dictionary <see cref="Apply"/> writes to instead of Application.Resources.</summary>
+    internal static ResourceDictionary? TestTarget { get; set; }
+
+    /// <summary>Tests: forget the one-time subscription so <see cref="EnsureInitialized"/> subscribes to a fresh AppServices.</summary>
+    internal static void ResetForTests()
+    {
+        _initialized = false;
+        Changed = null;
+    }
     private static AppSettings? _applied;
 
     /// <summary>Raised (UI thread) after the resources were updated.</summary>
@@ -52,7 +62,7 @@ public static class SettingsResources
     public static void Apply()
     {
         var s = AppServices.IsInitialized ? AppServices.Current : new AppSettings();
-        if (Application.Current?.Resources is { } res) ApplyTo(res, s);
+        if ((TestTarget ?? Application.Current?.Resources) is { } res) ApplyTo(res, s);
         _applied = s;
         Changed?.Invoke(null, EventArgs.Empty);
     }

@@ -230,6 +230,45 @@ public class SettingsServiceTests
     }
 
     [Fact]
+    public void SetValue_keeps_comments_and_formatting_of_the_user_file()
+    {
+        // Ctrl+wheel zoom persists editor.fontSize through SetValue; it must not wipe the user's comments.
+        using var tmp = new TempDir();
+        Directory.CreateDirectory(tmp.Paths.Roaming);
+        var original = SettingsJsonEdits.StarterText.Replace("{\n}\n", "{\n  // my font\n  \"editor\": { \"fontSize\": 13, \"wordWrap\": false },\n  \"table\": { \"pageSize\": 50, }, // trailing comma\n}\n");
+        File.WriteAllText(tmp.Paths.SettingsFile, original);
+        using var svc = new SettingsService(tmp.Paths);
+        svc.Load();
+        svc.SetValue("editor.fontSize", JsonValue.Create(20));
+        svc.SetValue("table.estimateAboveRows", JsonValue.Create(7));
+        svc.SetValue("grid.nullDisplay", JsonValue.Create("<null>"));
+        Assert.Null(svc.LastError);
+        Assert.Equal(20, svc.Current.Editor.FontSize);
+        Assert.False(svc.Current.Editor.WordWrap);
+        Assert.Equal(50, svc.Current.Table.PageSize);
+        Assert.Equal(7, svc.Current.Table.EstimateAboveRows);
+        Assert.Equal("<null>", svc.Current.Grid.NullDisplay);
+        var text = File.ReadAllText(tmp.Paths.SettingsFile);
+        Assert.StartsWith("// TablePlsu settings.", text);
+        Assert.Contains("// my font", text);
+        Assert.Contains("// trailing comma", text);
+        Assert.Contains("\"editor\": { \"fontSize\": 20, \"wordWrap\": false }", text);
+    }
+
+    [Theory]
+    [InlineData("{}", "editor.fontSize", "14", "{\n  \"editor\": {\n    \"fontSize\": 14\n  }\n}")]
+    [InlineData("{\n  \"a\": 1\n}", "editor.fontSize", "14", "{\n  \"a\": 1,\n  \"editor\": {\n    \"fontSize\": 14\n  }\n}")]
+    [InlineData("{ \"editor\": {} }", "editor.fontSize", "14", "{ \"editor\": {\n    \"fontSize\": 14\n  } }")]
+    [InlineData("{ \"editor\": 5 }", "editor.fontSize", "14", "{ \"editor\": {\n    \"fontSize\": 14\n  } }")]
+    [InlineData("{\n  \"editor\": {\n    \"x\": 1, // c\n  }\n}", "editor.fontSize", "14", "{\n  \"editor\": {\n    \"x\": 1,\n    \"fontSize\": 14, // c\n  }\n}")]
+    public void SetValueText_edits_text_in_place(string text, string key, string value, string expected)
+    {
+        var result = SettingsJsonEdits.SetValue(text, key, value);
+        Assert.Equal(expected, result);
+        using var _ = JsonDocument.Parse(result!, new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true });
+    }
+
+    [Fact]
     public void Embedded_defaults_and_schema_are_valid_json()
     {
         using var defaults = JsonDocument.Parse(SettingsService.DefaultsJson, new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip });

@@ -124,6 +124,13 @@ public static class AppServices
         SettingsChanged?.Invoke(null, e);
     }
 
+    /// <summary>Tests: drops every SettingsChanged/KeymapChanged subscriber (views left behind by earlier tests on dead threads).</summary>
+    internal static void ClearSubscribersForTests()
+    {
+        SettingsChanged = null;
+        KeymapChanged = null;
+    }
+
     /// <summary>The window that should own dialogs: the active one, else the main window.</summary>
     public static Window? ActiveWindow
     {

@@ -433,6 +433,12 @@ public partial class ResultGrid : UserControl
 
     private void OnGridResourcesChanged(object? sender, EventArgs e)
     {
+        // GridResources is static; a grid living on another UI thread refreshes on its own dispatcher.
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(() => OnGridResourcesChanged(sender, e));
+            return;
+        }
         // Formatting settings changed (null text, date format): re-format visible cells; recycled ones refresh on reuse.
         RefreshVisibleRows();
         _rowHeaderDigits = 0;

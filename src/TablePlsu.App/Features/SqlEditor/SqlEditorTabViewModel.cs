@@ -411,10 +411,13 @@ public sealed partial class SqlEditorTabViewModel : TabViewModelBase
             PushText();
             return;
         }
+        // editor.autoSaveDebounceMs is read on every keystroke so a settings change applies to open tabs too.
+        var ms = AppServices.IsInitialized ? AppServices.Current.Editor.AutoSaveDebounceMs : 500;
+        var interval = TimeSpan.FromMilliseconds(Math.Max(20, ms - 20));
+        if (_saveTimer is not null && _saveTimer.Interval != interval) _saveTimer.Interval = interval;
         if (_saveTimer is null)
         {
-            var ms = AppServices.IsInitialized ? AppServices.Current.Editor.AutoSaveDebounceMs : 500;
-            _saveTimer = new DispatcherTimer(DispatcherPriority.Background, dispatcher) { Interval = TimeSpan.FromMilliseconds(Math.Max(20, ms - 20)) };
+            _saveTimer = new DispatcherTimer(DispatcherPriority.Background, dispatcher) { Interval = interval };
             _saveTimer.Tick += (_, _) =>
             {
                 _saveTimer!.Stop();
@@ -424,6 +427,9 @@ public sealed partial class SqlEditorTabViewModel : TabViewModelBase
         _saveTimer.Stop();
         _saveTimer.Start();
     }
+
+    /// <summary>The current autosave debounce (null before the first keystroke). For tests.</summary>
+    internal TimeSpan? AutoSaveDelay => _saveTimer?.Interval;
 
     /// <summary>Hands the current text to the autosave store if it changed (UI thread).</summary>
     public void PushText()

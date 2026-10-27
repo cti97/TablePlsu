@@ -96,38 +96,19 @@ public sealed class SettingsService : IDisposable
     }
 
     /// <summary>
-    /// Sets one dotted key (e.g. "editor.fontSize") in the user file, preserving other keys, then reloads.
-    /// Comments in the user file are not preserved. Throws when the existing user file is not valid JSON.
+    /// Sets one dotted key (e.g. "editor.fontSize") in the user file by editing its text in place (other keys, comments and
+    /// formatting are kept), then reloads. Throws when the existing user file is not valid JSON.
     /// </summary>
     public void SetValue(string dottedKey, JsonNode? value)
     {
         lock (_gate)
         {
             var text = File.Exists(_paths.SettingsFile) ? AtomicFile.ReadAllTextShared(_paths.SettingsFile) : "{}";
-            JsonObject root;
-            try
-            {
-                root = JsonNode.Parse(string.IsNullOrWhiteSpace(text) ? "{}" : text, documentOptions: JsonNodeMerge.DocumentOptions) as JsonObject
-                       ?? throw new InvalidOperationException("settings.json root must be an object.");
-            }
-            catch (JsonException ex)
-            {
-                throw new InvalidOperationException("settings.json is not valid JSON; fix it before changing settings from the UI. " + ex.Message, ex);
-            }
-
-            var parts = dottedKey.Split('.');
-            var node = root;
-            for (var i = 0; i < parts.Length - 1; i++)
-            {
-                if (node[parts[i]] is not JsonObject child)
-                {
-                    child = new JsonObject();
-                    node[parts[i]] = child;
-                }
-                node = child;
-            }
-            node[parts[^1]] = value?.DeepClone();
-            AtomicFile.WriteAllText(_paths.SettingsFile, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            // Edit the text in place so the user's comments and formatting survive (zoom persists editor.fontSize here).
+            var valueText = value?.ToJsonString() ?? "null";
+            var edited = SettingsJsonEdits.SetValue(text, dottedKey, valueText)
+                         ?? throw new InvalidOperationException("settings.json is not valid JSON (or its root is not an object); fix it before changing settings from the UI.");
+            AtomicFile.WriteAllText(_paths.SettingsFile, edited);
         }
         ReloadCore(raise: true, force: true);
     }
