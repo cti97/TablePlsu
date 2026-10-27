@@ -96,22 +96,31 @@ public static class SidebarTree
     };
 
     public static bool Matches(string filter, string text, SidebarMatching matching) =>
-        filter.Length == 0 || (matching == SidebarMatching.Contains ? FuzzyMatcher.MatchContains(filter, text) : FuzzyMatcher.Match(filter, text)) is not null;
+        FuzzyMatcher.IsMatch(filter, text, contains: matching == SidebarMatching.Contains);
 
-    public static List<SidebarNode> Build(DbMetadata metadata, SidebarTreeOptions options)
+    public static List<SidebarNode> Build(DbMetadata metadata, SidebarTreeOptions options) => Build(SidebarIndex.Create(metadata), options);
+
+    /// <summary>
+    /// Builds the rows from a precomputed <see cref="SidebarIndex"/>: items are already sorted and their nodes already
+    /// built, so a keystroke only runs the (allocation-free) match per name and creates the few header rows. Pure and
+    /// thread-safe (the sidebar runs it off the UI thread); <paramref name="cancellationToken"/> stops a stale search.
+    /// </summary>
+    public static List<SidebarNode> Build(SidebarIndex index, SidebarTreeOptions options, CancellationToken cancellationToken = default)
     {
         var result = new List<SidebarNode>();
         var filter = options.Filter.Trim();
         var filtering = filter.Length > 0;
-        foreach (var schema in metadata.Schemas)
+        var contains = options.Matching == SidebarMatching.Contains;
+        foreach (var entry in index.Schemas)
         {
+            var schema = entry.Schema;
             if (options.VisibleSchemas is { } visible && !visible.Contains(schema.Name)) continue;
+            cancellationToken.ThrowIfCancellationRequested();
 
-            var tables = schema.Tables.Where(t => Matches(filter, t.Name, options.Matching)).OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase).ToList();
-            var functions = schema.Functions.Where(f => Matches(filter, f.Name, options.Matching))
-                .OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase).ThenBy(f => f.Arguments, StringComparer.Ordinal).ToList();
-            var sequences = schema.Sequences.Where(s => Matches(filter, s.Name, options.Matching)).OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase).ToList();
-            var types = schema.Types.Where(t => Matches(filter, t.Name, options.Matching)).OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase).ToList();
+            var tables = Filter(entry.Tables, filter, contains);
+            var functions = Filter(entry.Functions, filter, contains);
+            var sequences = Filter(entry.Sequences, filter, contains);
+            var types = Filter(entry.Types, filter, contains);
             var any = tables.Count + functions.Count + sequences.Count + types.Count > 0;
             if (filtering && !any) continue;
 
@@ -139,26 +148,25 @@ public static class SidebarTree
                 continue;
             }
 
-            AddSection(result, schema.Name, SidebarSection.Tables, tables, filtering, options, alwaysShow: !filtering, t => TableNode(t));
-            AddSection(result, schema.Name, SidebarSection.Functions, functions, filtering, options, alwaysShow: false, f => FunctionNode(f));
-            AddSection(result, schema.Name, SidebarSection.Sequences, sequences, filtering, options, alwaysShow: false, s => new SidebarNode
-            {
-                Kind = SidebarNodeKind.Item, Key = SectionKey(s.Schema, SidebarSection.Sequences) + "/" + s.Name, Text = s.Name, Schema = s.Schema,
-                Level = 2, Icon = SidebarNode.IconSequence, ObjectKind = ObjectKinds.Sequence, Sequence = s, Detail = s.DataType,
-                ToolTip = s.OwnedBy is null ? null : "Owned by " + s.OwnedBy,
-            });
-            AddSection(result, schema.Name, SidebarSection.Types, types, filtering, options, alwaysShow: false, t => new SidebarNode
-            {
-                Kind = SidebarNodeKind.Item, Key = SectionKey(t.Schema, SidebarSection.Types) + "/" + t.Name, Text = t.Name, Schema = t.Schema,
-                Level = 2, Icon = SidebarNode.IconType, ObjectKind = ObjectKinds.Type, Type = t, Detail = t.Kind.ToString().ToLowerInvariant(),
-                ToolTip = t.Comment,
-            });
+            AddSection(result, schema.Name, SidebarSection.Tables, tables, filtering, options, alwaysShow: !filtering);
+            AddSection(result, schema.Name, SidebarSection.Functions, functions, filtering, options, alwaysShow: false);
+            AddSection(result, schema.Name, SidebarSection.Sequences, sequences, filtering, options, alwaysShow: false);
+            AddSection(result, schema.Name, SidebarSection.Types, types, filtering, options, alwaysShow: false);
         }
         return result;
     }
 
-    private static void AddSection<T>(List<SidebarNode> result, string schema, SidebarSection section, List<T> items, bool filtering,
-        SidebarTreeOptions options, bool alwaysShow, Func<T, SidebarNode> create)
+    private static IReadOnlyList<SidebarNode> Filter(SidebarNode[] items, string filter, bool contains)
+    {
+        if (filter.Length == 0 || items.Length == 0) return items;
+        List<SidebarNode>? hits = null;
+        foreach (var n in items)
+            if (FuzzyMatcher.IsMatch(filter, n.Text, contains)) (hits ??= []).Add(n);
+        return hits is null ? [] : hits;
+    }
+
+    private static void AddSection(List<SidebarNode> result, string schema, SidebarSection section, IReadOnlyList<SidebarNode> items, bool filtering,
+        SidebarTreeOptions options, bool alwaysShow)
     {
         if (items.Count == 0 && !alwaysShow) return;
         var key = SectionKey(schema, section);
@@ -176,8 +184,22 @@ public static class SidebarTree
             Section = section,
         });
         if (!expanded) return;
-        foreach (var item in items) result.Add(create(item));
+        result.AddRange(items);
     }
+
+    internal static SidebarNode SequenceNode(SequenceInfo s) => new()
+    {
+        Kind = SidebarNodeKind.Item, Key = SectionKey(s.Schema, SidebarSection.Sequences) + "/" + s.Name, Text = s.Name, Schema = s.Schema,
+        Level = 2, Icon = SidebarNode.IconSequence, ObjectKind = ObjectKinds.Sequence, Sequence = s, Detail = s.DataType,
+        ToolTip = s.OwnedBy is null ? null : "Owned by " + s.OwnedBy,
+    };
+
+    internal static SidebarNode TypeNode(UserTypeInfo t) => new()
+    {
+        Kind = SidebarNodeKind.Item, Key = SectionKey(t.Schema, SidebarSection.Types) + "/" + t.Name, Text = t.Name, Schema = t.Schema,
+        Level = 2, Icon = SidebarNode.IconType, ObjectKind = ObjectKinds.Type, Type = t, Detail = t.Kind.ToString().ToLowerInvariant(),
+        ToolTip = t.Comment,
+    };
 
     public static SidebarNode TableNode(TableInfo t, int level = 2) => new()
     {
@@ -257,4 +279,57 @@ public static class SidebarTree
 
     public static FunctionInfo? FindFunction(DbMetadata md, SidebarItemRef r) =>
         md.FindSchema(r.Schema)?.FindFunctions(r.Name).FirstOrDefault(f => r.Signature is null || f.Arguments == r.Signature);
+}
+
+/// <summary>
+/// The sidebar's flat candidate index for one metadata snapshot: per schema, every table/function/sequence/type sorted
+/// as the tree shows them, with its row node built once. Rebuilt only when the metadata changes (schemas whose
+/// <see cref="SchemaInfo"/> instance did not change are reused from the previous index). Immutable, so searches can run
+/// on any thread.
+/// </summary>
+public sealed class SidebarIndex
+{
+    internal sealed record SchemaEntry(SchemaInfo Schema, SidebarNode[] Tables, SidebarNode[] Functions, SidebarNode[] Sequences, SidebarNode[] Types)
+    {
+        public int Count => Tables.Length + Functions.Length + Sequences.Length + Types.Length;
+    }
+
+    private SidebarIndex(DbMetadata metadata, SchemaEntry[] schemas)
+    {
+        Metadata = metadata;
+        Schemas = schemas;
+        CandidateCount = schemas.Sum(s => s.Count);
+    }
+
+    public DbMetadata Metadata { get; }
+
+    internal IReadOnlyList<SchemaEntry> Schemas { get; }
+
+    /// <summary>Searchable objects (tables, views, functions, sequences, types) across all schemas.</summary>
+    public int CandidateCount { get; }
+
+    public static SidebarIndex Create(DbMetadata metadata, SidebarIndex? previous = null)
+    {
+        if (previous is not null && ReferenceEquals(previous.Metadata, metadata)) return previous;
+        Dictionary<SchemaInfo, SchemaEntry>? reuse = null;
+        if (previous is not null)
+        {
+            reuse = new Dictionary<SchemaInfo, SchemaEntry>(ReferenceEqualityComparer.Instance);
+            foreach (var e in previous.Schemas) reuse[e.Schema] = e;
+        }
+        var entries = new SchemaEntry[metadata.Schemas.Count];
+        for (var i = 0; i < entries.Length; i++)
+        {
+            var s = metadata.Schemas[i];
+            entries[i] = reuse is not null && reuse.TryGetValue(s, out var e) ? e : CreateEntry(s);
+        }
+        return new SidebarIndex(metadata, entries);
+    }
+
+    private static SchemaEntry CreateEntry(SchemaInfo s) => new(
+        s,
+        [.. s.Tables.OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase).Select(t => SidebarTree.TableNode(t))],
+        [.. s.Functions.OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase).ThenBy(f => f.Arguments, StringComparer.Ordinal).Select(f => SidebarTree.FunctionNode(f))],
+        [.. s.Sequences.OrderBy(q => q.Name, StringComparer.OrdinalIgnoreCase).Select(SidebarTree.SequenceNode)],
+        [.. s.Types.OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase).Select(SidebarTree.TypeNode)]);
 }

@@ -40,7 +40,7 @@ public sealed record AppSettings
             DefaultRowLimit = Math.Max(0, Editor.DefaultRowLimit),
         },
         Grid = Grid with { FontSize = Math.Clamp(Grid.FontSize, 6, 100), RowPadding = Math.Clamp(Grid.RowPadding, 0, 40) },
-        Sidebar = Sidebar with { FontSize = Math.Clamp(Sidebar.FontSize, 6, 100), RowPadding = Math.Clamp(Sidebar.RowPadding, 0, 40) },
+        Sidebar = Sidebar with { FontSize = Math.Clamp(Sidebar.FontSize, 6, 100), RowPadding = Math.Clamp(Sidebar.RowPadding, 0, 40), SearchDebounceMs = Math.Clamp(Sidebar.SearchDebounceMs, 0, 2000) },
         Table = Table with { PageSize = Math.Clamp(Table.PageSize, 1, 1_000_000), EstimateAboveRows = Math.Max(0, Table.EstimateAboveRows) },
         Connections = Connections with { CommandTimeoutSeconds = Math.Max(0, Connections.CommandTimeoutSeconds) },
         History = History with { MaxEntries = Math.Max(1, History.MaxEntries) },
@@ -109,6 +109,12 @@ public sealed record SidebarSettings
     public bool LazyLoadSchemas { get; init; } = true;
     public bool LoadSystemSchemas { get; init; }
     public SidebarMatching Matching { get; init; } = SidebarMatching.Fuzzy;
+
+    /// <summary>
+    /// Typing pause (ms) before the sidebar / History search re-filters a large list; 0 filters on every keystroke.
+    /// Small lists always filter immediately.
+    /// </summary>
+    public int SearchDebounceMs { get; init; } = 120;
 }
 
 public sealed record TableSettings

@@ -32,6 +32,35 @@ public static class FuzzyMatcher
         return MatchFuzzy(pattern, candidate);
     }
 
+    /// <summary>
+    /// Same answer as <c>Match(pattern, candidate) is not null</c> (or <see cref="MatchContains"/> when
+    /// <paramref name="contains"/>), without scoring: no allocation, linear time. For filters that only need yes/no.
+    /// </summary>
+    public static bool IsMatch(string pattern, string candidate, bool contains = false)
+    {
+        if (pattern.Length == 0) return true;
+        if (contains) return candidate.Contains(pattern, StringComparison.OrdinalIgnoreCase);
+
+        var prefix = pattern.StartsWith('^');
+        var suffix = pattern.Length > (prefix ? 1 : 0) && pattern.EndsWith('$');
+        if (prefix || suffix)
+        {
+            var core = pattern.AsSpan(prefix ? 1 : 0, pattern.Length - (prefix ? 1 : 0) - (suffix ? 1 : 0));
+            if (prefix && suffix) return candidate.AsSpan().Equals(core, StringComparison.OrdinalIgnoreCase);
+            return prefix ? candidate.AsSpan().StartsWith(core, StringComparison.OrdinalIgnoreCase) : candidate.AsSpan().EndsWith(core, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // MatchFuzzy returns a match exactly when the pattern is a case-insensitive subsequence of the candidate.
+        int m = pattern.Length, n = candidate.Length;
+        if (m > n) return false;
+        for (int pi = 0, ci = 0; ci < n; ci++)
+        {
+            if (char.ToLowerInvariant(pattern[pi]) == char.ToLowerInvariant(candidate[ci]) && ++pi == m) return true;
+            if (n - ci - 1 < m - pi) return false;
+        }
+        return false;
+    }
+
     public static bool TryMatch(string pattern, string candidate, out FuzzyMatch match)
     {
         var m = Match(pattern, candidate);

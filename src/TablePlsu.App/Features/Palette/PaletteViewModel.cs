@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
+using TablePlsu.App.Features.Results;
 using TablePlsu.App.Infrastructure;
 using TablePlsu.Core.Db;
 using TablePlsu.Core.Metadata;
@@ -62,7 +63,8 @@ public sealed partial class PaletteViewModel : ObservableObject, IDisposable
 
     public string Placeholder { get; }
 
-    public ObservableCollection<PaletteRow> Rows { get; } = [];
+    /// <summary>The ranked rows; replaced with one Reset per keystroke (not a Clear plus one Add per row).</summary>
+    public BulkObservableCollection<PaletteRow> Rows { get; } = new();
 
     public int CandidateCount => _index.Count;
 
@@ -100,11 +102,24 @@ public sealed partial class PaletteViewModel : ObservableObject, IDisposable
         var sw = Stopwatch.StartNew();
         var hits = _index.Search(Text, MaxRows, emptyListsCommands: Mode == PaletteMode.Anything);
         LastSearchTime = sw.Elapsed;
-        Rows.Clear();
-        foreach (var h in hits) Rows.Add(new PaletteRow(h));
-        var index = keep is null ? -1 : hits.ToList().FindIndex(h => ReferenceEquals(h.Item, keep));
+        if (!SameHits(hits)) Rows.ReplaceAll(hits.Select(h => new PaletteRow(h)));
+        var index = -1;
+        for (var i = 0; keep is not null && i < hits.Count; i++)
+            if (ReferenceEquals(hits[i].Item, keep)) { index = i; break; }
         SelectedIndex = Rows.Count == 0 ? -1 : Math.Max(0, index);
         UpdateStatus();
+    }
+
+    /// <summary>The shown rows are these hits already (same items, same highlighted characters): nothing to redraw.</summary>
+    private bool SameHits(IReadOnlyList<PaletteHit> hits)
+    {
+        if (hits.Count != Rows.Count) return false;
+        for (var i = 0; i < hits.Count; i++)
+        {
+            var old = Rows[i].Hit;
+            if (!ReferenceEquals(old.Item, hits[i].Item) || old.MatchedTitle != hits[i].MatchedTitle || !old.Indices.AsSpan().SequenceEqual(hits[i].Indices)) return false;
+        }
+        return true;
     }
 
     private void UpdateStatus()
