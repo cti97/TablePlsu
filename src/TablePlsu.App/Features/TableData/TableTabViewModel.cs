@@ -42,7 +42,6 @@ public sealed partial class TableTabViewModel : TabViewModelBase, ICommandTarget
     private List<string?[]>? _pageKeyTexts;
     private IReadOnlyList<string> _pageKeyColumns = [];
     private bool _loadWhenConnected;
-    private bool _committing;
     private bool _metadataLoading;
     private readonly Dictionary<TableSubView, FrameworkElement> _subViews = [];
     private ChangesPreviewWindow? _preview;
@@ -96,7 +95,12 @@ public sealed partial class TableTabViewModel : TabViewModelBase, ICommandTarget
     [NotifyPropertyChangedFor(nameof(IsReadOnlyGrid))]
     public partial bool IsEditable { get; private set; }
 
-    public bool IsReadOnlyGrid => !IsEditable;
+    public bool IsReadOnlyGrid => !IsEditable || IsCommitting;
+
+    /// <summary>A commit is being confirmed or sent: staging is locked (see <see cref="CanStage"/>).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsReadOnlyGrid))]
+    public partial bool IsCommitting { get; private set; }
 
     /// <summary>Why the grid is read-only (shown as a banner), or null.</summary>
     [ObservableProperty]
@@ -550,24 +554,37 @@ public sealed partial class TableTabViewModel : TabViewModelBase, ICommandTarget
         return col is null || col.IsGenerated;
     }
 
+    /// <summary>
+    /// Staged changes can be modified: an editable table that is not committing. While a commit runs nothing may be
+    /// staged, because a successful commit clears everything that is staged (an edit made meanwhile would be lost).
+    /// </summary>
+    private bool CanStage => IsEditable && Pending is not null && !IsCommitting;
+
     public bool CanEditCell(object?[] row, int columnIndex) =>
-        IsEditable && Pending is not null && !Pending.IsDeleted(row) && !IsColumnReadOnly(columnIndex);
+        CanStage && !Pending!.IsDeleted(row) && !IsColumnReadOnly(columnIndex);
 
     /// <summary>Grid edit commit: stage the typed text. Returns the value the grid should show.</summary>
     public object? CommitCellEdit(object?[] row, int columnIndex, string text)
     {
         if (!CanEditCell(row, columnIndex)) return row[columnIndex];
-        Pending!.SetCell(row, columnIndex, text);
+        Pending!.SetCell(row, columnIndex, InputFor(columnIndex, text));
         return row[columnIndex];
     }
+
+    /// <summary>Typed text for a column (a zone-less timestamptz is UTC, as displayed; see <see cref="PgInput"/>).</summary>
+    private string InputFor(int columnIndex, string text) =>
+        Columns is not null && columnIndex < Columns.Count ? PgInput.ForColumn(Columns[columnIndex].DataTypeName, text) : text;
+
+    /// <summary>A pasted field: the text NULL is SQL NULL (what the grid shows and copies for NULL), anything else is typed text.</summary>
+    private object? PastedValue(int columnIndex, string field) => field == "NULL" ? null : InputFor(columnIndex, field);
 
     /// <summary>Set Value menu: applies <paramref name="value"/> to every selected cell (one undo step).</summary>
     public void SetSelectedCells(object? value)
     {
-        if (Pending is null || View is null) return;
+        if (!CanStage || View is null) return;
         var cells = View.Grid.GetSelectedCells();
         if (cells.Count == 0 && View.Grid.CurrentCellIndex is { } cur) cells = [cur];
-        using (Pending.BeginBatch())
+        using (Pending!.BeginBatch())
         {
             foreach (var (r, c) in cells)
             {
@@ -589,8 +606,8 @@ public sealed partial class TableTabViewModel : TabViewModelBase, ICommandTarget
     /// <summary>Ctrl+I: a new row with every column DEFAULT.</summary>
     public object?[]? InsertRow()
     {
-        if (!IsEditable || Pending is null) return null;
-        var row = Pending.InsertRow();
+        if (!CanStage) return null;
+        var row = Pending!.InsertRow();
         ScrollTo(row);
         return row;
     }
@@ -598,16 +615,24 @@ public sealed partial class TableTabViewModel : TabViewModelBase, ICommandTarget
     /// <summary>Ctrl+D: copies of the selected rows (PK / identity / generated columns left to DEFAULT when they have one).</summary>
     public void DuplicateSelectedRows()
     {
-        if (!IsEditable || Pending is null || View is null || Columns is null) return;
-        var rows = View.Grid.GetSelectedRows();
-        if (rows.Count == 0) return;
+        if (!CanStage || View is null || Columns is null) return;
+        DuplicateRows(View.Grid.GetSelectedRows());
+    }
+
+    /// <summary>
+    /// Stages copies of <paramref name="rows"/>. Values the grid only holds as a lossy preview (a truncated bytea,
+    /// an unreadable value) are not copied: those cells stay DEFAULT instead of inserting the preview text.
+    /// </summary>
+    public void DuplicateRows(IReadOnlyList<object?[]> rows)
+    {
+        if (!CanStage || Columns is null || rows.Count == 0) return;
         var setColumns = DuplicateColumns();
         object?[]? last = null;
-        using (Pending.BeginBatch())
+        using (Pending!.BeginBatch())
         {
             foreach (var row in rows)
             {
-                var cols = setColumns.Where(c => row[c] is not SqlDefault).ToList();
+                var cols = setColumns.Where(c => row[c] is not SqlDefault && !DbValueConverter.IsLossyPreview(row[c])).ToList();
                 last = Pending.InsertRow(row, cols);
             }
         }
@@ -631,30 +656,37 @@ public sealed partial class TableTabViewModel : TabViewModelBase, ICommandTarget
     /// <summary>Delete: stage deletes of the selected rows (restores them when all are already deleted).</summary>
     public void DeleteSelectedRows()
     {
-        if (!IsEditable || Pending is null || View is null) return;
+        if (!CanStage || View is null) return;
         var rows = View.Grid.GetSelectedRows();
         if (rows.Count == 0) return;
-        if (rows.All(Pending.IsDeleted)) Pending.RestoreRows(rows);
+        if (rows.All(Pending!.IsDeleted)) Pending.RestoreRows(rows);
         else Pending.DeleteRows(rows);
     }
 
-    /// <summary>Ctrl+V: clipboard TSV as new rows (columns from the first; empty fields stay DEFAULT).</summary>
-    public int PasteAsNewRows(string? text)
+    /// <summary>
+    /// Ctrl+V: clipboard TSV as new rows. Fields map to columns from <paramref name="startColumn"/> (default: the current
+    /// cell's column), except whole rows (at least one field per column), which map from the first column. Empty fields
+    /// stay DEFAULT; the text NULL is SQL NULL.
+    /// </summary>
+    public int PasteAsNewRows(string? text, int? startColumn = null)
     {
-        if (!IsEditable || Pending is null || Columns is null) return 0;
+        if (!CanStage || Columns is null) return 0;
         var lines = TsvParser.Parse(text);
         if (lines.Count == 0) return 0;
+        var start = startColumn ?? View?.Grid.CurrentCellIndex?.ColumnIndex ?? 0;
+        if (start < 0 || start >= Columns.Count || lines.Max(l => l.Length) >= Columns.Count) start = 0;
         object?[]? last = null;
-        using (Pending.BeginBatch())
+        using (Pending!.BeginBatch())
         {
             foreach (var fields in lines)
             {
                 var values = new object?[Columns.Count];
                 var set = new List<int>();
-                for (var c = 0; c < Math.Min(fields.Length, Columns.Count); c++)
+                for (var j = 0; j < fields.Length && start + j < Columns.Count; j++)
                 {
-                    if (fields[c].Length == 0 || IsColumnReadOnly(c)) continue;
-                    values[c] = fields[c];
+                    var c = start + j;
+                    if (fields[j].Length == 0 || IsColumnReadOnly(c)) continue;
+                    values[c] = PastedValue(c, fields[j]);
                     set.Add(c);
                 }
                 last = Pending.InsertRow(values, set);
@@ -667,29 +699,36 @@ public sealed partial class TableTabViewModel : TabViewModelBase, ICommandTarget
     /// <summary>Ctrl+Shift+V: clipboard TSV into the cells from the current cell (one value fills every selected cell).</summary>
     public int PasteIntoCells(string? text)
     {
-        if (!IsEditable || Pending is null || View is null || Columns is null) return 0;
+        if (!CanStage || View is null || Columns is null) return 0;
+        var selected = View.Grid.GetSelectedCells();
+        var start = View.Grid.CurrentCellIndex ?? (selected.Count > 0 ? selected.MinBy(s => (s.RowIndex, s.ColumnIndex)) : (0, 0));
+        return PasteIntoCells(text, start, selected);
+    }
+
+    /// <summary>Pastes TSV into cells from <paramref name="start"/>; a single value fills every cell of <paramref name="selected"/>.</summary>
+    public int PasteIntoCells(string? text, (int RowIndex, int ColumnIndex) start, IReadOnlyList<(int RowIndex, int ColumnIndex)> selected)
+    {
+        if (!CanStage || Columns is null) return 0;
         var lines = TsvParser.Parse(text);
         if (lines.Count == 0) return 0;
         var changed = 0;
-        using (Pending.BeginBatch())
+        using (Pending!.BeginBatch())
         {
-            var selected = View.Grid.GetSelectedCells();
             if (lines.Count == 1 && lines[0].Length == 1 && selected.Count > 1)
             {
                 foreach (var (r, c) in selected)
-                    if (r < Rows.Count && CanEditCell(Rows[r], c) && Pending.SetCell(Rows[r], c, lines[0][0])) changed++;
+                    if (r < Rows.Count && CanEditCell(Rows[r], c) && Pending.SetCell(Rows[r], c, PastedValue(c, lines[0][0]))) changed++;
                 return changed;
             }
-            var start = View.Grid.CurrentCellIndex ?? (selected.Count > 0 ? selected.MinBy(s => (s.RowIndex, s.ColumnIndex)) : (0, 0));
             for (var i = 0; i < lines.Count; i++)
             {
                 var r = start.RowIndex + i;
-                if (r >= Rows.Count) break;
+                if (r < 0 || r >= Rows.Count) break;
                 for (var j = 0; j < lines[i].Length; j++)
                 {
                     var c = start.ColumnIndex + j;
-                    if (c >= Columns.Count) break;
-                    if (CanEditCell(Rows[r], c) && Pending.SetCell(Rows[r], c, lines[i][j])) changed++;
+                    if (c < 0 || c >= Columns.Count) break;
+                    if (CanEditCell(Rows[r], c) && Pending.SetCell(Rows[r], c, PastedValue(c, lines[i][j]))) changed++;
                 }
             }
         }
@@ -702,9 +741,9 @@ public sealed partial class TableTabViewModel : TabViewModelBase, ICommandTarget
         if (index >= 0) View?.ScrollToRow(index);
     }
 
-    public bool Undo() => Pending?.Undo() == true;
+    public bool Undo() => !IsCommitting && Pending?.Undo() == true;
 
-    public bool Redo() => Pending?.Redo() == true;
+    public bool Redo() => !IsCommitting && Pending?.Redo() == true;
 
     private void OnPendingChanged(object? sender, EventArgs e)
     {
@@ -744,15 +783,17 @@ public sealed partial class TableTabViewModel : TabViewModelBase, ICommandTarget
     /// <summary>Sends every staged statement in one transaction (through Safe Mode). True when committed.</summary>
     public async Task<bool> CommitCoreAsync(bool showErrors = true)
     {
-        if (_committing || Pending is not { IsDirty: true }) return false;
-        var statements = GenerateStatements();
-        if (statements.Count == 0) return false;
-        if (!await Workspace.SafeMode.ConfirmAsync([.. statements.Select(s => s.LiteralSql)]).ConfigureAwait(true)) return false;
-        _committing = true;
-        IsBusy = true;
-        StatusText = "Committing…";
+        if (IsCommitting || Pending is not { IsDirty: true } pending) return false;
+        // Staging is locked from here until the outcome is known: the statements confirmed are exactly the ones sent, and
+        // nothing staged meanwhile can be wiped by the Clear() that follows a successful commit.
+        IsCommitting = true;
         try
         {
+            var statements = GenerateStatements();
+            if (statements.Count == 0) return false;
+            if (!await Workspace.SafeMode.ConfirmAsync([.. statements.Select(s => s.LiteralSql)]).ConfigureAwait(true)) return false;
+            IsBusy = true;
+            StatusText = "Committing…";
             var session = Workspace.Session;
             var timeout = AppServices.IsInitialized ? AppServices.Current.Connections.CommandTimeoutSeconds : 0;
             foreach (var s in statements) Workspace.Log(s.LiteralSql);
@@ -788,14 +829,15 @@ public sealed partial class TableTabViewModel : TabViewModelBase, ICommandTarget
             LastCommitError = null;
             LastFailedStatement = -1;
             Workspace.Log($"committed {statements.Count} statement(s) in {result.Elapsed.TotalMilliseconds:0} ms");
-            Pending.Clear();
+            pending.Clear();
+            IsCommitting = false;
             _preview?.Close();
             await LoadAsync(recount: true).ConfigureAwait(true);
             return true;
         }
         finally
         {
-            _committing = false;
+            IsCommitting = false;
             IsBusy = false;
         }
     }
@@ -832,7 +874,7 @@ public sealed partial class TableTabViewModel : TabViewModelBase, ICommandTarget
 
     public override void DiscardChanges()
     {
-        if (Pending is null) return;
+        if (Pending is null || IsCommitting) return;
         Pending.Clear();
         LastCommitError = null;
         LastFailedStatement = -1;

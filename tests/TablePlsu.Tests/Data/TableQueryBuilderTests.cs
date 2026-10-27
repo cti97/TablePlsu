@@ -155,6 +155,17 @@ public class TableQueryBuilderTests
         Assert.Empty(spec.Parameters);
     }
 
+    [Fact]
+    public void Key_columns_are_appended_as_aliased_text_so_order_by_stays_unambiguous()
+    {
+        var spec = TableQueryBuilder.BuildSelect(new TableQuery
+        {
+            Schema = "public", Table = "t", KeyColumns = ["id", "Part"], Sorts = [new("id", SortDirection.Asc)], Limit = 5,
+        });
+        Assert.Equal("SELECT *, id::text AS \"__tablplsu_key_0\", \"Part\"::text AS \"__tablplsu_key_1\" FROM public.t ORDER BY id ASC LIMIT 5", spec.Sql);
+        Assert.Equal(2, spec.KeyTextColumns);
+    }
+
     [Theory]
     [InlineData("a = 1; DROP TABLE x")]
     [InlineData("true); DELETE FROM t; SELECT (1")]

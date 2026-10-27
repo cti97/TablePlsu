@@ -115,6 +115,162 @@ public class DataEditSafetyTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task Composite_quoted_keys_pk_edits_and_edit_then_delete_hit_only_their_rows()
+    {
+        if (!TestPg.Available(output)) return;
+        var schema = "De Schema \"" + Guid.NewGuid().ToString("N")[..8];
+        const string table = "Mixed.Table;";
+        var qualified = SqlIdent.Qualified(schema, table);
+        await using var conn = await OpenAsync();
+        await Exec(conn, $"CREATE SCHEMA {SqlIdent.Quote(schema)}; " +
+                         $"CREATE TABLE {qualified}(\"Id\" int, \"part key\" text, \"select\" int, PRIMARY KEY (\"Id\", \"part key\")); " +
+                         $"INSERT INTO {qualified} VALUES (1, 'a', 0), (1, 'A', 0), (2, 'a', 0), (2, 'b''c', 0), (3, 'x', 0)");
+        try
+        {
+            var q = new TableQuery { Schema = schema, Table = table, Sorts = [new SortSpec("Id", SortDirection.Asc), new SortSpec("part key", SortDirection.Asc)], KeyColumns = ["Id", "part key"] };
+            var page = await TableDataAccess.LoadPageAsync(conn, TableQueryBuilder.BuildSelect(q));
+            Assert.Equal(5, page.Rows.Count);
+            object?[] Row(int id, string part) => page.Rows.Single(r => Convert.ToInt32(r[0]) == id && (string?)r[1] == part);
+            var p = new PendingChanges(3, [0, 1]);
+            p.AttachRows(page.Rows, page.KeyTexts);
+            var (a1, bc2, x3) = (Row(1, "a"), Row(2, "b'c"), Row(3, "x"));
+            p.SetCell(a1, 2, "10");          // plain edit
+            p.SetCell(bc2, 1, "renamed");    // PK column edited
+            p.SetCell(bc2, 2, "20");
+            p.SetCell(x3, 2, "30");          // edited (PK too), then deleted: only the DELETE by the original key is sent
+            p.SetCell(x3, 0, "99");
+            p.DeleteRow(x3);
+            var ins = p.InsertRow();
+            p.SetCell(ins, 0, "4");
+            p.SetCell(ins, 1, "new");
+            p.DeleteRow(p.InsertRow());               // inserted then removed: nothing sent
+            var statements = ChangeSqlGenerator.Generate(new ChangeTarget(schema, table, ["Id", "part key", "select"], [0, 1]), p);
+            foreach (var s in statements) output.WriteLine(s.LiteralSql);
+            Assert.Equal(4, statements.Count);
+            var result = await TableDataAccess.CommitAsync(conn, statements);
+            Assert.True(result.Success, result.Error);
+            Assert.Equal("1:A:0,1:a:10,2:a:0,2:renamed:20,4:new:", await Scalar(conn,
+                $"SELECT string_agg(\"Id\" || ':' || \"part key\" || ':' || coalesce(\"select\"::text, ''), ',' ORDER BY \"Id\", \"part key\" COLLATE \"C\") FROM {qualified}"));
+        }
+        finally
+        {
+            await Exec(conn, $"DROP SCHEMA IF EXISTS {SqlIdent.Quote(schema)} CASCADE");
+        }
+    }
+
+    [Fact]
+    public async Task Update_matching_no_row_or_several_rows_rolls_back_everything()
+    {
+        if (!TestPg.Available(output)) return;
+        var table = Scratch();
+        await using var conn = await OpenAsync();
+        // A stale "primary key" (the metadata said k, the real table allows duplicates of k): the guard must catch it.
+        await Exec(conn, $"CREATE TABLE public.{table}(k int, v int); INSERT INTO public.{table} VALUES (1, 0), (2, 0), (2, 0)");
+        try
+        {
+            var target = new ChangeTarget("public", table, ["k", "v"], [0]);
+            foreach (var (key, expectedError) in new[] { ("2", "affected 2 row(s)"), ("3", "affected 0 row(s)") })
+            {
+                var p = new PendingChanges(2, [0]);
+                var rowA = new object?[] { 1, 0 };
+                var rowB = new object?[] { key, 0 };
+                p.AttachRows([rowA, rowB], [["1"], [key]]);
+                p.SetCell(rowA, 1, "5");   // succeeds first…
+                p.SetCell(rowB, 1, "7");   // …then this one matches 2 rows / no row
+                var result = await TableDataAccess.CommitAsync(conn, ChangeSqlGenerator.Generate(target, p));
+                Assert.False(result.Success);
+                Assert.Equal(1, result.FailedIndex);
+                Assert.Contains(expectedError, result.Error);
+                Assert.Equal(0L, await Scalar(conn, $"SELECT count(*) FROM public.{table} WHERE v <> 0"));
+                p.DeleteRow(rowB);
+                Assert.False((await TableDataAccess.CommitAsync(conn, ChangeSqlGenerator.Generate(target, p))).Success);
+                Assert.Equal(3L, await Scalar(conn, $"SELECT count(*) FROM public.{table}"));
+            }
+        }
+        finally
+        {
+            await Exec(conn, $"DROP TABLE IF EXISTS public.{table}");
+        }
+    }
+
+    /// <summary>Duplicate Row inserts the loaded values: they must write back as the very same values.</summary>
+    [Fact]
+    public async Task Loaded_values_insert_back_unchanged()
+    {
+        if (!TestPg.Available(output)) return;
+        var table = Scratch();
+        await using var conn = await OpenAsync();
+        const string cols = "a, b, c, d, e, f, g, h, i, j";
+        await Exec(conn, $"CREATE TABLE public.{table}(id int PRIMARY KEY, a inet, b timestamptz[], c text[], d numeric, e bytea, " +
+                         "f interval, g jsonb, h timestamptz, i date[], j cidr); " +
+                         $"INSERT INTO public.{table} VALUES (1, '10.0.0.1/8', '{{\"2024-01-01 10:00:00.5+00\",NULL}}', '{{\"a b\",\"NULL\",NULL,\"x,y\",\"q\\\"\"}}', " +
+                         "1.2300, '\\x00ff', '1 day 02:00:00.25', '{\"k\": [1, 2.50]}', '2024-07-01 23:59:59.999999+00', '{2024-02-29}', '10.1.0.0/16')");
+        try
+        {
+            var q = new TableQuery { Schema = "public", Table = table, KeyColumns = ["id"] };
+            var page = await TableDataAccess.LoadPageAsync(conn, TableQueryBuilder.BuildSelect(q));
+            var p = new PendingChanges(page.Columns.Count, [0]);
+            p.AttachRows(page.Rows, page.KeyTexts);
+            var copy = (object?[])page.Rows[0].Clone();
+            copy[0] = "2";
+            p.InsertRow(copy, Enumerable.Range(0, page.Columns.Count));
+            var statements = ChangeSqlGenerator.Generate(new ChangeTarget("public", table, [.. page.Columns.Select(c => c.Name)], [0]), p);
+            output.WriteLine(statements[0].LiteralSql);
+            var result = await TableDataAccess.CommitAsync(conn, statements);
+            Assert.True(result.Success, result.Error);
+            foreach (var col in cols.Split(", "))
+            {
+                var same = await Scalar(conn, $"SELECT (SELECT {col} FROM public.{table} WHERE id = 1) IS NOT DISTINCT FROM (SELECT {col} FROM public.{table} WHERE id = 2)");
+                Assert.True((bool)same!, $"column {col} changed: {await Scalar(conn, $"SELECT string_agg({col}::text, ' vs ' ORDER BY id) FROM public.{table}")}");
+            }
+        }
+        finally
+        {
+            await Exec(conn, $"DROP TABLE IF EXISTS public.{table}");
+        }
+    }
+
+    [Fact]
+    public async Task Typed_timestamptz_is_read_as_the_utc_wall_time_the_grid_shows()
+    {
+        if (!TestPg.Available(output)) return;
+        var table = Scratch();
+        await using var conn = await OpenAsync("Asia/Kolkata");
+        await Exec(conn, $"CREATE TABLE public.{table}(id int PRIMARY KEY, at timestamptz); INSERT INTO public.{table} VALUES (1, '2024-01-01 10:00:00+00'), (2, NULL)");
+        try
+        {
+            var q = new TableQuery { Schema = "public", Table = table, Sorts = [new SortSpec("id", SortDirection.Asc)], KeyColumns = ["id"] };
+            var page = await TableDataAccess.LoadPageAsync(conn, TableQueryBuilder.BuildSelect(q));
+            var shown = (DateTime)page.Rows[0][1]!;
+            Assert.Equal(DateTimeKind.Utc, shown.Kind);
+            Assert.Equal("2024-01-01 10:00:00", shown.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture));
+
+            // The user changes the minutes of what the grid shows (UTC wall time) and types into an empty cell.
+            var type = page.Columns[1].DataTypeName;
+            Assert.Equal("2024-01-01 10:30:00+00", PgInput.ForColumn(type, "2024-01-01 10:30:00"));
+            Assert.Equal("2024-01-01 10:30:00+02", PgInput.ForColumn(type, "2024-01-01 10:30:00+02"));
+            Assert.Equal("now", PgInput.ForColumn(type, "now"));
+            Assert.Equal("2024-01-01 10:30:00", PgInput.ForColumn("timestamp without time zone", "2024-01-01 10:30:00"));
+            var p = new PendingChanges(2, [0]);
+            p.AttachRows(page.Rows, page.KeyTexts);
+            p.SetCell(page.Rows[0], 1, PgInput.ForColumn(type, "2024-01-01 10:30:00"));
+            p.SetCell(page.Rows[1], 1, PgInput.ForColumn(type, "2024-06-01T08:00"));
+            var result = await TableDataAccess.CommitAsync(conn, ChangeSqlGenerator.Generate(new ChangeTarget("public", table, ["id", "at"], [0]), p));
+            Assert.True(result.Success, result.Error);
+            Assert.Equal("2024-01-01 10:30:00", await Scalar(conn, $"SELECT to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') FROM public.{table} WHERE id = 1"));
+            Assert.Equal("2024-06-01 08:00:00", await Scalar(conn, $"SELECT to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') FROM public.{table} WHERE id = 2"));
+
+            // Without the suffix the session time zone (+05:30) shifts the instant: what the editor used to send.
+            await Exec(conn, $"UPDATE public.{table} SET at = '2024-01-01 10:30:00' WHERE id = 1");
+            Assert.Equal("2024-01-01 05:00:00", await Scalar(conn, $"SELECT to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') FROM public.{table} WHERE id = 1"));
+        }
+        finally
+        {
+            await Exec(conn, $"DROP TABLE IF EXISTS public.{table}");
+        }
+    }
+
+    [Fact]
     public async Task Raw_filter_cannot_smuggle_a_second_statement_past_safe_mode()
     {
         if (!TestPg.Available(output)) return;

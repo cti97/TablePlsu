@@ -55,7 +55,9 @@ public static class TableQueryBuilder
         var cols = q.SelectColumns ?? (q.Columns.Count > 0 ? q.Columns.Select(c => c.Name).ToList() : null);
         if (cols is null || cols.Count == 0) b.Append("*");
         else b.Append(string.Join(", ", cols.Select(SqlIdent.QuoteIfNeeded)));
-        foreach (var k in q.KeyColumns) b.Append(", ").AppendIdent(k).Append("::text");
+        // Aliased: a second output column named like the key would make ORDER BY "id" ambiguous.
+        for (var k = 0; k < q.KeyColumns.Count; k++)
+            b.Append(", ").AppendIdent(q.KeyColumns[k]).Append("::text AS ").Append(KeyTextAlias(k));
         b.Append(" FROM ").Append(SqlIdent.Qualified(q.Schema, q.Table));
         AppendWhere(b, q);
         if (q.Sorts.Count > 0)
@@ -67,6 +69,9 @@ public static class TableQueryBuilder
         if (q.Offset > 0) b.Append(" OFFSET ").Append(q.Offset.ToString(CultureInfo.InvariantCulture));
         return b.Build() with { KeyTextColumns = q.KeyColumns.Count };
     }
+
+    /// <summary>Output name of the k-th key text column (unlikely to clash with a real column).</summary>
+    public static string KeyTextAlias(int k) => "\"__tablplsu_key_" + k.ToString(CultureInfo.InvariantCulture) + "\"";
 
     /// <summary><c>SELECT count(*) FROM schema.table WHERE …</c> (same filters, no sort/paging).</summary>
     public static SqlCommandSpec BuildCount(TableQuery q)
