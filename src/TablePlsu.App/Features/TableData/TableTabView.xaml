@@ -1,0 +1,165 @@
+<UserControl x:Class="TablePlsu.App.Features.TableData.TableTabView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:infra="clr-namespace:TablePlsu.App.Infrastructure"
+             xmlns:results="clr-namespace:TablePlsu.App.Features.Results"
+             xmlns:td="clr-namespace:TablePlsu.App.Features.TableData"
+             infra:CommandScopes.Scope="Grid"
+             Background="{DynamicResource c.app.window}">
+    <UserControl.Resources>
+        <Style x:Key="SubTab" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{DynamicResource c.app.mutedForeground}" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="Bd" Background="Transparent" Padding="12,4" BorderThickness="0,2,0,0" BorderBrush="Transparent">
+                            <ContentPresenter VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource c.app.hover}" />
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource c.app.accent}" />
+                                <Setter Property="Foreground" Value="{DynamicResource c.app.windowForeground}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
+    <DockPanel>
+        <!-- Bottom bar: Data / Structure / Indexes, status, row count, paging -->
+        <Border DockPanel.Dock="Bottom" Background="{DynamicResource c.app.toolbar}" BorderBrush="{DynamicResource c.app.border}" BorderThickness="0,1,0,0">
+            <DockPanel Height="30" LastChildFill="True">
+                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
+                    <RadioButton Style="{StaticResource SubTab}" Content="Data"
+                                 IsChecked="{Binding SelectedSubView, Mode=TwoWay, Converter={x:Static infra:EnumEqualsConverter.Instance}, ConverterParameter=Data}"
+                                 ToolTip="{Binding Source={x:Static infra:AppServices.Shortcuts}, Path=[table.showData]}" />
+                    <RadioButton Style="{StaticResource SubTab}" Content="Structure"
+                                 IsChecked="{Binding SelectedSubView, Mode=TwoWay, Converter={x:Static infra:EnumEqualsConverter.Instance}, ConverterParameter=Structure}"
+                                 ToolTip="{Binding Source={x:Static infra:AppServices.Shortcuts}, Path=[table.showStructure]}" />
+                    <RadioButton Style="{StaticResource SubTab}" Content="Indexes"
+                                 Visibility="{Binding IsTableKind, Converter={x:Static infra:BoolToVisibilityConverter.Instance}}"
+                                 IsChecked="{Binding SelectedSubView, Mode=TwoWay, Converter={x:Static infra:EnumEqualsConverter.Instance}, ConverterParameter=Indexes}"
+                                 ToolTip="{Binding Source={x:Static infra:AppServices.Shortcuts}, Path=[table.showIndexes]}" />
+                    <RadioButton Style="{StaticResource SubTab}" Content="DDL"
+                                 Visibility="{Binding IsViewKind, Converter={x:Static infra:BoolToVisibilityConverter.Instance}}"
+                                 IsChecked="{Binding SelectedSubView, Mode=TwoWay, Converter={x:Static infra:EnumEqualsConverter.Instance}, ConverterParameter=Ddl}" />
+                </StackPanel>
+
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="0,0,6,0"
+                            Visibility="{Binding IsDataView, Converter={x:Static infra:BoolToVisibilityConverter.Instance}}">
+                    <Button x:Name="RowCountButton" Style="{DynamicResource FlatButton}" Content="{Binding RowCountText}" Command="{Binding CountExactCommand}"
+                            IsHitTestVisible="{Binding RowCountClickable}" ToolTip="Click to run an exact count(*)" />
+                    <Button Style="{DynamicResource FlatButton}" Command="{Binding PrevPageCommand}" IsEnabled="{Binding CanPrevPage}"
+                            ToolTip="{Binding Source={x:Static infra:AppServices.Shortcuts}, Path=[page.prev]}">
+                        <TextBlock Style="{DynamicResource Icon}" Text="&#xE76B;" />
+                    </Button>
+                    <Button x:Name="PageButton" Style="{DynamicResource FlatButton}" Content="{Binding PageText}" Click="OnPageButtonClick" ToolTip="Limit / Offset" />
+                    <Button Style="{DynamicResource FlatButton}" Command="{Binding NextPageCommand}" IsEnabled="{Binding CanNextPage}"
+                            ToolTip="{Binding Source={x:Static infra:AppServices.Shortcuts}, Path=[page.next]}">
+                        <TextBlock Style="{DynamicResource Icon}" Text="&#xE76C;" />
+                    </Button>
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" Margin="10,0" VerticalAlignment="Center">
+                    <ToggleButton Style="{DynamicResource ToolbarToggle}" Height="24" IsChecked="{Binding Filter.IsVisible, Mode=TwoWay}"
+                                  Visibility="{Binding IsDataView, Converter={x:Static infra:BoolToVisibilityConverter.Instance}}"
+                                  ToolTip="{Binding Source={x:Static infra:AppServices.Shortcuts}, Path=[table.filterToggle]}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{DynamicResource Icon}" Text="&#xE71C;" />
+                            <TextBlock Text=" Filter" Visibility="{Binding Filter.HasApplied, Converter={x:Static infra:BoolToVisibilityConverter.Instance}}"
+                                       Foreground="{DynamicResource c.app.accent}" />
+                        </StackPanel>
+                    </ToggleButton>
+                    <TextBlock Text="{Binding StatusText}" Style="{DynamicResource MutedText}" VerticalAlignment="Center" Margin="8,0,0,0" TextTrimming="CharacterEllipsis" />
+                    <TextBlock VerticalAlignment="Center" Margin="10,0,0,0" Foreground="{DynamicResource c.app.warning}"
+                               Visibility="{Binding HasPendingChanges, Converter={x:Static infra:BoolToVisibilityConverter.Instance}}">
+                        <Run Text="{Binding PendingCount, Mode=OneWay}" /><Run Text=" pending" />
+                    </TextBlock>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- Read-only banner -->
+        <Border DockPanel.Dock="Top" Background="{DynamicResource c.app.statusBar}" BorderBrush="{DynamicResource c.app.border}" BorderThickness="0,0,0,1"
+                Padding="10,5" Visibility="{Binding HasReadOnlyReason, Converter={x:Static infra:BoolToVisibilityConverter.Instance}}">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Style="{DynamicResource Icon}" Text="&#xE72E;" Margin="0,0,8,0" Foreground="{DynamicResource c.app.mutedForeground}" />
+                <TextBlock Text="{Binding ReadOnlyReason}" Foreground="{DynamicResource c.app.statusBarForeground}" TextWrapping="Wrap" />
+            </StackPanel>
+        </Border>
+
+        <!-- Error -->
+        <Border DockPanel.Dock="Top" Padding="10,5" BorderBrush="{DynamicResource c.app.error}" BorderThickness="0,0,0,1"
+                Visibility="{Binding HasError, Converter={x:Static infra:BoolToVisibilityConverter.Instance}}">
+            <TextBlock Text="{Binding ErrorText}" Foreground="{DynamicResource c.app.error}" TextWrapping="Wrap" />
+        </Border>
+
+        <!-- Filter bar -->
+        <Border x:Name="FilterBar" DockPanel.Dock="Top" infra:CommandScopes.Scope="FilterBar"
+                Background="{DynamicResource c.app.toolbar}" BorderBrush="{DynamicResource c.app.border}" BorderThickness="0,0,0,1" Padding="8,4"
+                PreviewKeyDown="OnFilterBarPreviewKeyDown">
+            <Border.Visibility>
+                <MultiBinding Converter="{x:Static td:AllTrueToVisibilityConverter.Instance}">
+                    <Binding Path="Filter.IsVisible" />
+                    <Binding Path="IsDataView" />
+                </MultiBinding>
+            </Border.Visibility>
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top">
+                    <Button Content="Apply" MinWidth="60" Height="24" Click="OnApplyAllClick"
+                            ToolTip="{Binding Source={x:Static infra:AppServices.Shortcuts}, Path=[filter.applyAll]}" />
+                    <ComboBox Width="62" Height="24" Margin="4,0,0,0" SelectedIndex="{Binding Filter.Join, Converter={x:Static td:JoinIndexConverter.Instance}, Mode=TwoWay}"
+                              ToolTip="Combine checked filters with AND or OR">
+                        <ComboBoxItem Content="AND" />
+                        <ComboBoxItem Content="OR" />
+                    </ComboBox>
+                    <Button Content="SQL" MinWidth="44" Height="24" Margin="4,0,0,0" Click="OnShowWhereClick" ToolTip="Show the generated WHERE clause" />
+                    <Button Content="Clear" MinWidth="50" Height="24" Margin="4,0,0,0" Click="OnClearFiltersClick" />
+                </StackPanel>
+                <ItemsControl x:Name="FilterRows" ItemsSource="{Binding Filter.Rows}" Focusable="False" Margin="0,0,8,0">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="{x:Type td:FilterRowViewModel}">
+                            <DockPanel Margin="0,2" GotKeyboardFocus="OnFilterRowFocus">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                    <Button Style="{DynamicResource FlatButton}" MinHeight="22" Padding="6,0" Content="+" Click="OnAddFilterRowClick"
+                                            ToolTip="{Binding Source={x:Static infra:AppServices.Shortcuts}, Path=[filter.addRow]}" />
+                                    <Button Style="{DynamicResource FlatButton}" MinHeight="22" Padding="6,0" Content="−" Click="OnRemoveFilterRowClick"
+                                            ToolTip="{Binding Source={x:Static infra:AppServices.Shortcuts}, Path=[filter.removeRow]}" />
+                                </StackPanel>
+                                <CheckBox DockPanel.Dock="Left" IsChecked="{Binding Enabled}" VerticalAlignment="Center" Margin="0,0,6,0"
+                                          ToolTip="{Binding Source={x:Static infra:AppServices.Shortcuts}, Path=[filter.toggleRow]}" />
+                                <ComboBox DockPanel.Dock="Left" Width="160" Height="24" Margin="0,0,4,0" VerticalContentAlignment="Center" IsTextSearchEnabled="True"
+                                          ItemsSource="{Binding DataContext.Filter.ColumnOptions, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                          SelectedItem="{Binding Column}" DisplayMemberPath="Label" />
+                                <ComboBox DockPanel.Dock="Left" Width="150" Height="24" Margin="0,0,4,0" VerticalContentAlignment="Center"
+                                          ItemsSource="{Binding DataContext.Filter.Operators, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                          SelectedItem="{Binding Operator}" DisplayMemberPath="Label"
+                                          Visibility="{Binding ShowOperator, Converter={x:Static infra:BoolToVisibilityConverter.Instance}}" />
+                                <TextBox DockPanel.Dock="Right" Width="140" Height="24" Margin="0,0,4,0" VerticalContentAlignment="Center" Text="{Binding Value2, UpdateSourceTrigger=PropertyChanged}"
+                                         Visibility="{Binding ShowValue2, Converter={x:Static infra:BoolToVisibilityConverter.Instance}}" ToolTip="Upper bound" />
+                                <TextBox Height="24" Margin="0,0,4,0" VerticalContentAlignment="Center" Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}" ToolTip="{Binding ValuePlaceholder}"
+                                         Visibility="{Binding ShowValue, Converter={x:Static infra:BoolToVisibilityConverter.Instance}}" />
+                            </DockPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </DockPanel>
+        </Border>
+
+        <Grid>
+            <results:ResultGrid x:Name="DataGridView"
+                                ResultColumns="{Binding Columns}" Rows="{Binding Rows}" IsReadOnly="{Binding IsReadOnlyGrid}"
+                                ServerSort="True" RowStateProvider="{Binding}"
+                                Visibility="{Binding IsDataView, Converter={x:Static infra:BoolToVisibilityConverter.Instance}}" />
+            <ContentControl Content="{Binding SubViewContent}" Focusable="False"
+                            Visibility="{Binding IsDataView, Converter={x:Static infra:BoolToVisibilityConverter.Instance}, ConverterParameter=invert}" />
+        </Grid>
+    </DockPanel>
+</UserControl>

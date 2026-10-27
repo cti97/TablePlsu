@@ -226,3 +226,39 @@ public class PendingChangesTests
         Assert.Equal(3, p.Count);
     }
 }
+
+public class TsvParserTests
+{
+    [Fact]
+    public void Parses_rows_fields_and_quotes()
+    {
+        var rows = TsvParser.Parse("a\tb\r\n\"x\ty\"\t\"say \"\"hi\"\"\nthere\"\r\n");
+        Assert.Equal(2, rows.Count);
+        Assert.Equal(["a", "b"], rows[0]);
+        Assert.Equal(["x\ty", "say \"hi\"\nthere"], rows[1]);
+    }
+
+    [Fact]
+    public void Empty_fields_and_no_trailing_newline()
+    {
+        Assert.Equal([["", "1", ""]], TsvParser.Parse("\t1\t"));
+        Assert.Equal([["v"]], TsvParser.Parse("v"));
+        Assert.Empty(TsvParser.Parse(""));
+    }
+}
+
+public class PendingChangesTextEqualityTests
+{
+    [Fact]
+    public void Typed_text_equal_to_original_value_unstages()
+    {
+        var row = new object?[] { 1L, 42 };
+        var p = new PendingChanges(2, [0]);
+        p.AttachRows([row]);
+        p.SetCell(row, 1, "43");
+        Assert.True(p.IsDirty);
+        p.SetCell(row, 1, "42");
+        Assert.False(p.IsDirty);
+        Assert.False(p.SetCell(row, 1, "42"));
+    }
+}

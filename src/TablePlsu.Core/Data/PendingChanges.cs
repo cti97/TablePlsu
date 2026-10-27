@@ -340,8 +340,9 @@ public sealed class PendingChanges
     {
         if (a is null || b is null) return a is null && b is null;
         if (Equals(a, b)) return true;
-        // A typed value and the text the user typed for it ("42" vs 42) are not equal on purpose: the server decides.
-        return false;
+        if (a is SqlDefault or SqlExpression || b is SqlDefault or SqlExpression) return false;
+        // The text the user typed for a typed value ("42" for 42L) counts as unchanged.
+        return (a is string || b is string) && string.Equals(PgText.Format(a), PgText.Format(b), StringComparison.Ordinal);
     }
 
     // ---- primitive state changes (used by ops) ---------------------------------------------------------------------
