@@ -288,9 +288,7 @@ public sealed partial class WorkspaceViewModel : ObservableObject, IWorkspace, I
     /// <summary>Ctrl+1..9 (1-based).</summary>
     public void GotoTab(int number)
     {
-        // Ctrl+9 is "last tab" (browser / TablePlus convention), so it works with fewer than nine tabs too.
-        if (number == 9 && _tabs.Count > 0) ActiveTab = _tabs[^1];
-        else if (number >= 1 && number <= _tabs.Count) ActiveTab = _tabs[number - 1];
+        if (number >= 1 && number <= _tabs.Count) ActiveTab = _tabs[number - 1];
     }
 
     public void PinTab(TabViewModelBase tab) => tab.IsPreview = false;

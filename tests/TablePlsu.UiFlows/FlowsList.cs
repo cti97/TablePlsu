@@ -111,6 +111,12 @@ public sealed partial class Flows
         Click(box);
         U.Keys("Ctrl+A");
         U.Type(text, 2);
+        if (!WaitTrue(() => Value(box) == text, 3000))
+        {
+            // A dead key left pending on the desktop (US-International layout) can combine with the first letter; retype.
+            U.Keys("Ctrl+A");
+            U.Type(text, 2);
+        }
         Check(WaitTrue(() => Value(box) == text, 3000), $"field shows '{Value(box)}' after typing '{text}'");
     }
 
@@ -345,8 +351,9 @@ public sealed partial class Flows
         Check(WaitTrue(() => IsSelected(Tabs()[2]), 2000), "Ctrl+Tab did not move to tab 3 (selected: " + SelectedTabName() + ")");
         U.Keys("Ctrl+Shift+Tab");
         Check(WaitTrue(() => IsSelected(Tabs()[1]), 2000), "Ctrl+Shift+Tab did not move back to tab 2 (selected: " + SelectedTabName() + ")");
-        U.Keys("Ctrl+9");
-        Check(WaitTrue(() => IsSelected(Tabs()[^1]), 2000), "Ctrl+9 did not select the last tab (selected: " + SelectedTabName() + ")");
+        var n = Math.Min(Tabs().Count, 9);
+        U.Keys("Ctrl+" + n);
+        Check(WaitTrue(() => IsSelected(Tabs()[n - 1]), 2000), $"Ctrl+{n} did not select tab {n} (selected: " + SelectedTabName() + ")");
         // From inside the editor too (focus in AvalonEdit must not swallow Ctrl+Tab).
         Click(Editor());
         U.Keys("Ctrl+1");

@@ -261,6 +261,7 @@ public class PaletteViewModelTests(ITestOutputHelper output)
     {
         // UI flow "Ctrl+P orders": sales is listed but not loaded (sidebar.lazyLoadSchemas); the palette must load it.
         if (!TestPg.Available(output)) return;
+        UiDispatch.Initialize(null!); // run marshalled work inline (another test may have left a dispatcher that never pumps)
         TestApp.Init(new WorkspaceFeature(), new PaletteFeature());
         var (profile, secrets) = TestPg.Profile();
         var ws = new WorkspaceViewModel(profile, secrets, null, null);
@@ -285,6 +286,7 @@ public class PaletteViewModelTests(ITestOutputHelper output)
     {
         // UI flow "Ctrl+K tableplsu_test_2": the list was cached by an earlier palette; reopening must show new databases.
         if (!TestPg.Available(output)) return;
+        UiDispatch.Initialize(null!); // run marshalled work inline (another test may have left a dispatcher that never pumps)
         TestApp.Init(new WorkspaceFeature(), new PaletteFeature());
         var (profile, secrets) = TestPg.Profile();
         var ws = new WorkspaceViewModel(profile, secrets, null, null);
@@ -319,6 +321,7 @@ public class PaletteViewModelTests(ITestOutputHelper output)
         // UI flow: Ctrl+P right after connect, before the first metadata refresh has listed the schemas. The palette
         // could only load schemas it knew when it opened, so "orders" (schema sales) never showed up.
         if (!TestPg.Available(output)) return;
+        UiDispatch.Initialize(null!); // run marshalled work inline (another test may have left a dispatcher that never pumps)
         TestApp.Init(new WorkspaceFeature(), new PaletteFeature());
         var (profile, secrets) = TestPg.Profile();
         var ws = new WorkspaceViewModel(profile, secrets, null, null);
