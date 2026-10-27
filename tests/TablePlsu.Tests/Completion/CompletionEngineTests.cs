@@ -574,10 +574,19 @@ public class CompletionEngineTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void Join_alias_after_on_in_big_schema()
+    {
+        var text = "SELECT a.user_col0, b.ord FROM user_user_0 a JOIN order_user_1 b ON b.";
+        var r = CompletionEngine.Complete(text, text.Length, Big());
+        Assert.Equal(CompletionContextKind.Member, r.Context);
+        Assert.Contains("payment_col8", Names(r));
+    }
+
+    [Fact]
     public void Five_thousand_tables_complete_well_under_a_frame()
     {
         var md = Big();
-        var sql = string.Concat(Enumerable.Repeat("SELECT a.user_col0, b.order_col1 FROM user_user_0 a JOIN order_order_1 b ON a.user_col0 = b.user_col0 WHERE a.log_col6 = 'x';\n", 200));
+        var sql = string.Concat(Enumerable.Repeat("SELECT a.user_col0, b.order_col1 FROM user_user_0 a JOIN order_user_1 b ON a.user_col0 = b.user_col0 WHERE a.log_col6 = 'x';\n", 200));
         string[] probes =
         [
             sql + "SELECT * FROM u",
@@ -585,7 +594,7 @@ public class CompletionEngineTests(ITestOutputHelper output)
             sql + "SELECT * FROM ",
             sql + "us",
             sql + "SELECT a.us FROM user_user_0 a",
-            sql + "SELECT ord FROM user_user_0 a JOIN order_order_1 b ON true",
+            sql + "SELECT ord FROM user_user_0 a JOIN order_user_1 b ON true",
             sql + "SELECT * FROM schema3.pay",
             sql + "SELECT * FROM xq",
         ];

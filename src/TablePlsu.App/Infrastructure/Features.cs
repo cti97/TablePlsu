@@ -1,3 +1,4 @@
+using TablePlsu.App.Features.Completion;
 using TablePlsu.App.Features.Console;
 using TablePlsu.App.Features.Palette;
 using TablePlsu.App.Features.Results;
@@ -33,5 +34,6 @@ public static class Features
         new SafeModeFeature(),
         new SettingsFeature(),
         new ConsoleFeature(),
+        new CompletionFeature(),
     ];
 }
