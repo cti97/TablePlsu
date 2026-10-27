@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using TablePlsu.Core.Paths;
 using TablePlsu.Core.Startup;
@@ -26,7 +27,9 @@ public static class Program
         SingleInstance? instance = null;
         if (!launch.MeasureStartup)
         {
-            var name = SingleInstance.NameFor(Environment.UserDomainName + "\\" + Environment.UserName, AppPaths.Current.Roaming);
+            // USERDOMAIN from the environment: Environment.UserDomainName may look the account up (slow on domain machines).
+            var user = Environment.GetEnvironmentVariable("USERDOMAIN") + "\\" + Environment.UserName;
+            var name = SingleInstance.NameFor(user, AppPaths.Current.Roaming);
             instance = SingleInstance.Acquire(name);
             if (!instance.IsPrimary)
             {
@@ -42,7 +45,13 @@ public static class Program
             }
         }
         if (launch.Quit) return 0; // nothing to quit
+        return RunApp(launch, instance);
+    }
 
+    // Separate, never inlined: compiling Main must not resolve WPF types, so a forwarding launch never loads WPF.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static int RunApp(LaunchArgs launch, SingleInstance? instance)
+    {
         var app = new App { Launch = launch, Instance = instance };
         app.InitializeComponent();
         return app.Run();
