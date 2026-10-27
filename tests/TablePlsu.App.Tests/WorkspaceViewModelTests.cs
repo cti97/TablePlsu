@@ -48,6 +48,23 @@ public class WorkspaceViewModelTests
     }
 
     [Fact]
+    public void Goto_tab_numbers_and_ctrl9_is_last_tab()
+    {
+        var ws = NewWorkspace();
+        var a = ws.OpenTab(Table("a", pinned: true))!;
+        var b = ws.OpenTab(Table("b", pinned: true))!;
+        var c = ws.OpenTab(Table("c", pinned: true))!;
+        ws.GotoTab(1);
+        Assert.Same(a, ws.ActiveTab);
+        ws.GotoTab(2);
+        Assert.Same(b, ws.ActiveTab);
+        ws.GotoTab(5); // no 5th tab: nothing happens
+        Assert.Same(b, ws.ActiveTab);
+        ws.GotoTab(9); // UI flow: Ctrl+9 with three tabs selects the last one
+        Assert.Same(c, ws.ActiveTab);
+    }
+
+    [Fact]
     public void Tab_with_pending_changes_is_kept()
     {
         var ws = NewWorkspace();

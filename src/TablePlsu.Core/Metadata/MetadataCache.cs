@@ -169,6 +169,11 @@ public sealed class MetadataCache : IDisposable
             lock (_gate)
             {
                 if (_disposed) return md;
+                // Lazy mode: a schema loaded (EnsureSchemaLoadedAsync) after this refresh was planned is newer than the
+                // refresh's "listed only" entry for it; keep it instead of publishing over it.
+                foreach (var s in Current.Schemas)
+                    if (s.IsLoaded && md.FindSchema(s.Name) is { IsLoaded: false })
+                        md = md.WithSchema(s);
                 Volatile.Write(ref _current, md);
                 LastRefreshed = md.LoadedAt;
                 LastError = null;

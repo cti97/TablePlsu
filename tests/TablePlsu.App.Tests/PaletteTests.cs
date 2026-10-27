@@ -256,4 +256,61 @@ public class PaletteViewModelTests(ITestOutputHelper output)
             await ws.CloseAsync();
         }
     }
+    [Fact]
+    public async Task Open_anything_finds_tables_in_schemas_the_sidebar_has_not_loaded()
+    {
+        // UI flow "Ctrl+P orders": sales is listed but not loaded (sidebar.lazyLoadSchemas); the palette must load it.
+        if (!TestPg.Available(output)) return;
+        TestApp.Init(new WorkspaceFeature(), new PaletteFeature());
+        var (profile, secrets) = TestPg.Profile();
+        var ws = new WorkspaceViewModel(profile, secrets, null, null);
+        try
+        {
+            await ws.ConnectAsync();
+            await ws.Metadata.RefreshAsync();
+            Assert.False(ws.Metadata.Current.FindSchema("sales")?.IsLoaded ?? true, "precondition: sales not loaded yet");
+            using var vm = new PaletteViewModel(PaletteMode.Anything, ws, null);
+            vm.Text = "orders";
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            while (DateTime.UtcNow < deadline && !vm.Rows.Any(r => r.Item.Title == "orders")) await Task.Delay(50);
+            Assert.Contains(vm.Rows, r => r.Item.Title == "orders");
+        }
+        finally
+        {
+            await ws.CloseAsync();
+        }
+    }
+    [Fact]
+    public async Task Open_database_lists_a_database_created_after_the_last_listing()
+    {
+        // UI flow "Ctrl+K tableplsu_test_2": the list was cached by an earlier palette; reopening must show new databases.
+        if (!TestPg.Available(output)) return;
+        TestApp.Init(new WorkspaceFeature(), new PaletteFeature());
+        var (profile, secrets) = TestPg.Profile();
+        var ws = new WorkspaceViewModel(profile, secrets, null, null);
+        var db = "tableplsu_pal_" + Guid.NewGuid().ToString("N")[..8];
+        try
+        {
+            await ws.ConnectAsync();
+            await DatabaseList.For(ws).RefreshAsync(ws.Session);
+            await using (var c = new Npgsql.NpgsqlConnection(TestPg.ConnectionString))
+            {
+                await c.OpenAsync();
+                await using var cmd = new Npgsql.NpgsqlCommand($"create database {db}", c);
+                await cmd.ExecuteNonQueryAsync();
+            }
+            using var vm = new PaletteViewModel(PaletteMode.Databases, ws, null);
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            while (DateTime.UtcNow < deadline && !vm.Rows.Any(r => r.Item.Title == db)) await Task.Delay(50);
+            Assert.Contains(vm.Rows, r => r.Item.Title == db);
+        }
+        finally
+        {
+            await ws.CloseAsync();
+            await using var c = new Npgsql.NpgsqlConnection(TestPg.ConnectionString);
+            await c.OpenAsync();
+            await using var cmd = new Npgsql.NpgsqlCommand($"drop database if exists {db} with (force)", c);
+            await cmd.ExecuteNonQueryAsync();
+        }
+    }
 }
