@@ -231,15 +231,24 @@ public static class ResidentMode
 
     private static void ReportActivation(LaunchMessage message, MainWindow window, bool wasHidden)
     {
-        var launchedAt = message.Args.Select(a => a.StartsWith("--launched-at=", StringComparison.Ordinal) && long.TryParse(a[14..], out var t) ? t : 0).FirstOrDefault(t => t > 0);
+        var launchedAt = Ticks(message, "--launched-at=");
+        var mainAt = Ticks(message, "--main-at=");
+        var receivedAt = DateTime.UtcNow.Ticks;
         // Visible = after layout and the render pass that follow Show (ContextIdle runs after Render).
         window.Dispatcher.BeginInvoke(() =>
         {
             var ms = launchedAt > 0 ? (DateTime.UtcNow - new DateTime(launchedAt, DateTimeKind.Utc)).TotalMilliseconds : double.NaN;
-            Log($"activation: {ms:F0} ms from second launch to window visible (window was {(wasHidden ? "hidden" : "visible")})", "startup.log");
+            var main = launchedAt > 0 && mainAt > 0 ? (mainAt - launchedAt) / 10_000.0 : double.NaN;
+            var received = launchedAt > 0 ? (receivedAt - launchedAt) / 10_000.0 : double.NaN;
+            Log($"activation: {ms:F0} ms from second launch to window visible (second process reached Main at {main:F0} ms, " +
+                $"message received at {received:F0} ms; window was {(wasHidden ? "hidden" : "visible")})", "startup.log");
             if (wasHidden) window.Hide(); // ready for the next measurement run
         }, DispatcherPriority.ContextIdle);
     }
+
+    private static long Ticks(LaunchMessage message, string prefix) =>
+        message.Args.Select(a => a.StartsWith(prefix, StringComparison.Ordinal) && long.TryParse(a[prefix.Length..], out var t) ? t : 0)
+            .FirstOrDefault(t => t > 0);
 
     private static void Log(string line, string file = "errors.log")
     {

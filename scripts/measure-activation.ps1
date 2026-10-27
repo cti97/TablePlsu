@@ -31,27 +31,34 @@ function Invoke-Second([string]$arg) {
     $p = [Diagnostics.Process]::Start((New-Object Diagnostics.ProcessStartInfo $path, $arg -Property @{ UseShellExecute = $false }))
     if (-not $p.WaitForExit(15000)) { $p.Kill(); throw "second launch did not exit" }
     $exitMs = ($p.ExitTime - $p.StartTime).TotalMilliseconds
-    $deadline = [DateTime]::Now.AddSeconds(15)
+    $deadline = [DateTime]::Now.AddSeconds(120)
     while (@(Get-ActivationLines).Count -le $before) {
         if ([DateTime]::Now -gt $deadline) { throw "no activation line logged" }
         Start-Sleep -Milliseconds 50
     }
     $line = @(Get-ActivationLines)[-1]
-    $null = $line -match "activation: (\d+) ms"
-    return [pscustomobject]@{ ExitMs = $exitMs; ShowMs = [double]$Matches[1] }
+    $null = $line -match "activation: (\d+) ms.*Main at (\S+) ms, message received at (\S+) ms"
+    return [pscustomobject]@{ ExitMs = $exitMs; ShowMs = [double]$Matches[1]; MainMs = [double]$Matches[2]; RecvMs = [double]$Matches[3] }
 }
 
 $primary = $null
 try {
+    $pipesBefore = @([IO.Directory]::GetFiles("\\.\pipe\") | Where-Object { $_ -like "*TablePlsu-*" })
     $primary = [Diagnostics.Process]::Start((New-Object Diagnostics.ProcessStartInfo $path, "--background" -Property @{ UseShellExecute = $false }))
+    # Wait until the primary listens (after its first, offscreen render); a launch before that would wait up to 5 s.
+    $deadline = [DateTime]::Now.AddSeconds(120)
+    while (@([IO.Directory]::GetFiles("\\.\pipe\") | Where-Object { $_ -like "*TablePlsu-*" -and $pipesBefore -notcontains $_ }).Count -eq 0) {
+        if ([DateTime]::Now -gt $deadline) { throw "primary never started listening" }
+        Start-Sleep -Milliseconds 100
+    }
     $null = Invoke-Second "--measure-activation" # warm-up (also waits until the primary listens)
-    $exits = @(); $shows = @()
+    $exits = @(); $shows = @(); $mains = @(); $recvs = @()
     for ($i = 1; $i -le $Runs; $i++) {
         $r = Invoke-Second "--measure-activation"
-        Write-Output ("run {0}: second process exited after {1:N0} ms; window visible {2:N0} ms after launch" -f $i, $r.ExitMs, $r.ShowMs)
-        $exits += $r.ExitMs; $shows += $r.ShowMs
+        Write-Output ("run {0}: second process reached Main {1:N0} ms, forwarded {2:N0} ms, exited {3:N0} ms; window visible {4:N0} ms after launch" -f $i, $r.MainMs, $r.RecvMs, $r.ExitMs, $r.ShowMs)
+        $exits += $r.ExitMs; $shows += $r.ShowMs; $mains += $r.MainMs; $recvs += $r.RecvMs
     }
-    Write-Output ("median of {0} runs: second process exit {1:N0} ms; second launch to window visible {2:N0} ms" -f $Runs, (Get-Median $exits), (Get-Median $shows))
+    Write-Output ("median of {0} runs: second process reached Main {1:N0} ms, forwarded {2:N0} ms, exited {3:N0} ms; second launch to window visible {4:N0} ms" -f $Runs, (Get-Median $mains), (Get-Median $recvs), (Get-Median $exits), (Get-Median $shows))
 }
 finally {
     $q = [Diagnostics.Process]::Start((New-Object Diagnostics.ProcessStartInfo $path, "--quit" -Property @{ UseShellExecute = $false }))

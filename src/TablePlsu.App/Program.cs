@@ -18,6 +18,7 @@ public static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        var mainAt = DateTime.UtcNow;
         // TABLEPLSU_ROOT redirects all app data (roaming + local) for smoke tests and portable runs; it also scopes the
         // single-instance name, so such runs never talk to the user's normal instance.
         if (Environment.GetEnvironmentVariable("TABLEPLSU_ROOT") is { Length: > 0 } root)
@@ -36,7 +37,9 @@ public static class Program
                 if (launch.Background) return 0; // already running
                 // Let the running instance take the foreground (this process has the right, it was just launched).
                 AllowSetForegroundWindow(AsfwAny);
-                string[] forwarded = launch.MeasureActivation ? [.. args, "--launched-at=" + ProcessStartUtcTicks()] : args;
+                string[] forwarded = launch.MeasureActivation
+                    ? [.. args, "--launched-at=" + ProcessStartUtcTicks(), "--main-at=" + mainAt.Ticks]
+                    : args;
                 if (SingleInstance.TrySend(name, new LaunchMessage(forwarded, Environment.CurrentDirectory), TimeSpan.FromSeconds(5)))
                     return 0;
                 // No answer (the other process is hung or exiting): run on our own rather than not at all.
