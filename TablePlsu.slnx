@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/TablePlsu.App/TablePlsu.App.csproj" />
+    <Project Path="src/TablePlsu.Core/TablePlsu.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/TablePlsu.Tests/TablePlsu.Tests.csproj" />
+  </Folder>
+</Solution>
