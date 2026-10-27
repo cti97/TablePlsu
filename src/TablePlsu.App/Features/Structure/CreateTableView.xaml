@@ -1,0 +1,193 @@
+<UserControl x:Class="TablePlsu.App.Features.Structure.CreateTableView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:infra="clr-namespace:TablePlsu.App.Infrastructure"
+             xmlns:local="clr-namespace:TablePlsu.App.Features.Structure"
+             infra:CommandScopes.Scope="Grid"
+             Background="{DynamicResource c.app.window}"
+             Foreground="{DynamicResource c.app.windowForeground}">
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+        <Style x:Key="HeaderStyle" TargetType="DataGridColumnHeader">
+            <Setter Property="Background" Value="{DynamicResource c.grid.headerBackground}" />
+            <Setter Property="Foreground" Value="{DynamicResource c.grid.headerForeground}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource c.grid.lines}" />
+            <Setter Property="BorderThickness" Value="0,0,1,1" />
+            <Setter Property="Padding" Value="6,4" />
+        </Style>
+        <Style x:Key="CellStyle" TargetType="DataGridCell">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Foreground" Value="{DynamicResource c.grid.foreground}" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Style.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource c.grid.cellSelectionBackground}" />
+                    <Setter Property="Foreground" Value="{DynamicResource c.grid.foreground}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="CellTextBox" TargetType="TextBox">
+            <Setter Property="Foreground" Value="{DynamicResource c.grid.foreground}" />
+            <Setter Property="CaretBrush" Value="{DynamicResource c.editor.caret}" />
+            <Setter Property="SelectionBrush" Value="{DynamicResource c.editor.selection}" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Margin" Value="1" />
+        </Style>
+        <Style x:Key="PkToken" TargetType="ToggleButton">
+            <Setter Property="Margin" Value="0,0,4,4" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Focusable" Value="True" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Bd" CornerRadius="3" Padding="7,2" BorderThickness="1"
+                                BorderBrush="{DynamicResource c.app.border}" Background="Transparent">
+                            <TextBlock x:Name="Tx" Text="{Binding Name}" Foreground="{DynamicResource c.app.mutedForeground}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource c.app.accent}" />
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource c.app.accent}" />
+                                <Setter TargetName="Tx" Property="Foreground" Value="{DynamicResource c.app.accentForeground}" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource c.app.accent}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
+    <DockPanel Margin="12">
+        <!-- Name + schema -->
+        <Grid DockPanel.Dock="Top" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="260" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="200" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="Name" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource c.app.mutedForeground}" />
+            <TextBox x:Name="NameBox" Grid.Column="1" Text="{Binding TableName, UpdateSourceTrigger=PropertyChanged}" VerticalContentAlignment="Center" />
+            <TextBlock Grid.Column="2" Text="Schema" VerticalAlignment="Center" Margin="16,0,8,0" Foreground="{DynamicResource c.app.mutedForeground}" />
+            <ComboBox Grid.Column="3" ItemsSource="{Binding Schemas}" IsEditable="True"
+                      Text="{Binding SchemaName, UpdateSourceTrigger=PropertyChanged}" />
+        </Grid>
+
+        <!-- Primary key tokens -->
+        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+            <TextBlock Text="Primary key" VerticalAlignment="Top" Margin="0,3,8,0" Foreground="{DynamicResource c.app.mutedForeground}" />
+            <ItemsControl ItemsSource="{Binding Columns}" Focusable="False">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <WrapPanel />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate DataType="local:NewColumnRow">
+                        <ToggleButton Style="{StaticResource PkToken}" IsChecked="{Binding IsPrimaryKey}"
+                                      ToolTip="Toggle primary key column" />
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </DockPanel>
+
+        <!-- Bottom: buttons + validation message -->
+        <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <Button Content="Preview SQL" Command="{Binding PreviewSqlCommand}" Padding="12,3" Margin="0,0,8,0" />
+                <Button x:Name="CreateButton" Content="Create" Command="{Binding CreateCommand}" Style="{DynamicResource AccentButton}" Padding="16,3" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal">
+                <Button x:Name="AddButton" Content="+ Column" Command="{Binding AddColumnCommand}" Padding="10,3" Margin="0,0,8,0" />
+                <Button Content="− Delete Column" Command="{Binding DeleteColumnCommand}" Padding="10,3" />
+                <TextBlock Text="{Binding Message}" Foreground="{DynamicResource c.app.error}" VerticalAlignment="Center"
+                           Margin="12,0,0,0" TextWrapping="Wrap" MaxWidth="600" />
+            </StackPanel>
+        </DockPanel>
+
+        <Border BorderBrush="{DynamicResource c.app.border}" BorderThickness="1">
+            <DataGrid x:Name="ColumnsGrid"
+                      ItemsSource="{Binding Columns}"
+                      SelectedItem="{Binding SelectedColumn}"
+                      AutoGenerateColumns="False"
+                      CanUserAddRows="False"
+                      CanUserDeleteRows="False"
+                      CanUserSortColumns="False"
+                      CanUserReorderColumns="False"
+                      IsReadOnly="True"
+                      SelectionMode="Single"
+                      SelectionUnit="FullRow"
+                      HeadersVisibility="Column"
+                      GridLinesVisibility="Horizontal"
+                      RowHeight="28"
+                      Background="{DynamicResource c.grid.background}"
+                      Foreground="{DynamicResource c.grid.foreground}"
+                      RowBackground="{DynamicResource c.grid.background}"
+                      AlternatingRowBackground="{DynamicResource c.grid.background}"
+                      HorizontalGridLinesBrush="{DynamicResource c.grid.lines}"
+                      VerticalGridLinesBrush="{DynamicResource c.grid.lines}"
+                      BorderThickness="0"
+                      ColumnHeaderStyle="{StaticResource HeaderStyle}"
+                      CellStyle="{StaticResource CellStyle}">
+                <DataGrid.Columns>
+                    <DataGridTemplateColumn Header="column__name" Width="200">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate DataType="local:NewColumnRow">
+                                <TextBox x:Name="ColName" Style="{StaticResource CellTextBox}" Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="data__type" Width="180">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate DataType="local:NewColumnRow">
+                                <ComboBox IsEditable="True" Margin="1"
+                                          ItemsSource="{Binding DataContext.CommonTypes, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                          Text="{Binding DataType, UpdateSourceTrigger=PropertyChanged}" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="is__nullable" Width="90">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate DataType="local:NewColumnRow">
+                                <CheckBox IsChecked="{Binding IsNullable}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          IsEnabled="{Binding IsPrimaryKey, Converter={x:Static local:InverseBool.Instance}}" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="default" Width="200">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate DataType="local:NewColumnRow">
+                                <ComboBox IsEditable="True" Margin="1"
+                                          ItemsSource="{Binding DataContext.DefaultOptions, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                          Text="{Binding Default, UpdateSourceTrigger=PropertyChanged}" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="comment" Width="*">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate DataType="local:NewColumnRow">
+                                <TextBox Style="{StaticResource CellTextBox}" Text="{Binding Comment, UpdateSourceTrigger=PropertyChanged}" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="" Width="34">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate DataType="local:NewColumnRow">
+                                <Button Content="✕" Style="{DynamicResource FlatButton}" Padding="4,0" ToolTip="Delete column"
+                                        Command="{Binding DataContext.DeleteColumnCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                        CommandParameter="{Binding}" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                </DataGrid.Columns>
+            </DataGrid>
+        </Border>
+    </DockPanel>
+</UserControl>
