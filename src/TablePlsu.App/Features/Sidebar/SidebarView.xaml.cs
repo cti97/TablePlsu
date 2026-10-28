@@ -61,6 +61,9 @@ public partial class SidebarView : UserControl
             case nameof(SidebarViewModel.StatusText):
                 UpdateStatus();
                 break;
+            case nameof(SidebarViewModel.ShowEmptyDatabaseHint):
+                ApplyTab();
+                break;
         }
     }
 
@@ -71,7 +74,10 @@ public partial class SidebarView : UserControl
         var history = HistoryActive;
         ItemsTabButton.IsChecked = !history;
         HistoryTabButton.IsChecked = history;
-        ItemsList.Visibility = ItemsSearch.Visibility = SchemaBar.Visibility = NewButton.Visibility = history ? Visibility.Collapsed : Visibility.Visible;
+        ItemsSearch.Visibility = SchemaBar.Visibility = NewButton.Visibility = history ? Visibility.Collapsed : Visibility.Visible;
+        var emptyHint = !history && _vm?.ShowEmptyDatabaseHint == true;
+        ItemsList.Visibility = history || emptyHint ? Visibility.Collapsed : Visibility.Visible;
+        EmptyHintPanel.Visibility = emptyHint ? Visibility.Visible : Visibility.Collapsed;
         HistoryList.Visibility = HistorySearch.Visibility = history ? Visibility.Visible : Visibility.Collapsed;
         UpdateHint();
         UpdateStatus();
@@ -85,7 +91,16 @@ public partial class SidebarView : UserControl
     }
 
     private void UpdateStatus() =>
-        ItemsStatus.Visibility = !HistoryActive && !string.IsNullOrEmpty(_vm?.StatusText) ? Visibility.Visible : Visibility.Collapsed;
+        ItemsStatus.Visibility = !HistoryActive && _vm?.ShowEmptyDatabaseHint != true && !string.IsNullOrEmpty(_vm?.StatusText) ? Visibility.Visible : Visibility.Collapsed;
+
+    // ---- empty-database hint ------------------------------------------------------------------------------------
+
+    private void OnOtherDatabaseClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is string database) _vm?.OpenOtherDatabase(database);
+    }
+
+    private void OnOpenDatabasePalette(object sender, RoutedEventArgs e) => _vm?.OpenDatabasePalette();
 
     private void OnItemsTabChecked(object sender, RoutedEventArgs e)
     {

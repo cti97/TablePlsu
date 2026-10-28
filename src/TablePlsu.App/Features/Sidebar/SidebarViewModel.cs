@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
+using TablePlsu.App.Features.Palette;
 using TablePlsu.App.Features.Results;
 using TablePlsu.App.Features.Workspace;
 using TablePlsu.App.Infrastructure;
@@ -92,6 +93,8 @@ public sealed partial class SidebarViewModel : ObservableObject, ICommandTarget,
         workspace.StateChanged += OnStateChanged;
         if (AppServices.IsInitialized) AppServices.SettingsChanged += OnSettingsChanged;
         Rebuild();
+        // The server refresh may have finished before the sidebar was first shown.
+        if (workspace.Metadata.LastRefreshed is not null) CheckEmptyDatabase();
     }
 
     public IWorkspace Workspace { get; }
@@ -568,6 +571,151 @@ public sealed partial class SidebarViewModel : ObservableObject, ICommandTarget,
         await LoadHistoryAsync().ConfigureAwait(true);
     }
 
+    // ---- empty-database hint ----------------------------------------------------------------------------------------
+    // Connected to a database without user objects (typically the maintenance DB "postgres"), the Items tab shows the
+    // server's other databases instead of a bare tree. Decided only after a server refresh (never from the disk cache),
+    // with a server-side check so lazily unloaded schemas are not mistaken for empty ones.
+
+    /// <summary>At most this many databases are listed; the rest are reachable through Open Database (Ctrl+K).</summary>
+    public const int MaxHintDatabases = 15;
+
+    /// <summary>Lists the server's databases (tests replace it). Default: the palette's <see cref="DatabaseList"/>, which it also warms.</summary>
+    public static Func<IWorkspace, CancellationToken, Task<IReadOnlyList<string>>> ListDatabases { get; set; } =
+        (ws, ct) => DatabaseList.For(ws).RefreshAsync(ws.Session, ct);
+
+    private readonly CancellationTokenSource _emptyHintCts = new();
+    private int _emptyHintVersion;
+
+    /// <summary>The Items tab shows the empty-database panel instead of the tree.</summary>
+    [ObservableProperty]
+    public partial bool ShowEmptyDatabaseHint { get; private set; }
+
+    public string EmptyDatabaseMessage => $"No tables in database “{Workspace.Database}”.";
+
+    /// <summary>The server's other databases (ordered by name, at most <see cref="MaxHintDatabases"/>).</summary>
+    public ObservableCollection<string> OtherDatabases { get; } = [];
+
+    /// <summary>More databases than listed: show "More… (Ctrl+K)".</summary>
+    [ObservableProperty]
+    public partial bool HasMoreDatabases { get; private set; }
+
+    /// <summary>The database list could not be read (permissions…): show "Switch database (Ctrl+K)" instead.</summary>
+    [ObservableProperty]
+    public partial bool DatabaseListUnavailable { get; private set; }
+
+    /// <summary>The list loaded and has entries.</summary>
+    [ObservableProperty]
+    public partial bool HasOtherDatabases { get; private set; }
+
+    /// <summary>The list loaded but this is the only database.</summary>
+    [ObservableProperty]
+    public partial bool NoOtherDatabases { get; private set; }
+
+    /// <summary>Times the hint check started (tests).</summary>
+    public int EmptyHintChecks { get; private set; }
+
+    /// <summary>The latest hint check (tests await it).</summary>
+    public Task EmptyHintTask { get; private set; } = Task.CompletedTask;
+
+    private void CheckEmptyDatabase()
+    {
+        if (_disposed) return;
+        EmptyHintTask = CheckEmptyDatabaseAsync(++_emptyHintVersion);
+        EmptyHintChecks++;
+    }
+
+    private async Task CheckEmptyDatabaseAsync(int version)
+    {
+        try
+        {
+            if (DatabaseContents.SnapshotHasUserObjects(Workspace.Metadata.Current))
+            {
+                HideEmptyHint();
+                return;
+            }
+            var ct = _emptyHintCts.Token;
+            var session = Workspace.Session;
+            var hasObjects = await Task.Run(() => DatabaseContents.HasUserObjectsAsync(session, ct), ct).ConfigureAwait(true);
+            if (version != _emptyHintVersion) return;
+            if (hasObjects)
+            {
+                HideEmptyHint();
+                return;
+            }
+
+            IReadOnlyList<string>? names;
+            try
+            {
+                // Called on the UI thread: DatabaseList.For touches ws.Services (a plain dictionary) and DatabaseList's
+                // own in-flight task field, both shared with the palette. RefreshAsync does the query on the pool.
+                names = await ListDatabases(Workspace, ct).ConfigureAwait(true);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                names = null;
+            }
+            if (version != _emptyHintVersion) return;
+            UiDispatch.Run(() =>
+            {
+                if (version == _emptyHintVersion) ApplyEmptyHint(names);
+            });
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            // Nothing awaits EmptyHintTask in the app, so log every failure rather than letting it vanish unobserved.
+            if (!_disposed) Workspace.Log("Checking whether the database is empty failed: " + ex.GetBaseException().Message);
+        }
+    }
+
+    private void ApplyEmptyHint(IReadOnlyList<string>? names)
+    {
+        var others = names?.Where(n => n != Workspace.Database).ToList();
+        OtherDatabases.Clear();
+        if (others is not null)
+            foreach (var n in others.Take(MaxHintDatabases)) OtherDatabases.Add(n);
+        HasMoreDatabases = others is { Count: > MaxHintDatabases };
+        DatabaseListUnavailable = others is null;
+        HasOtherDatabases = OtherDatabases.Count > 0;
+        NoOtherDatabases = others is { Count: 0 };
+        ShowEmptyDatabaseHint = true;
+    }
+
+    private void HideEmptyHint()
+    {
+        void Hide()
+        {
+            _emptyHintVersion++;
+            ShowEmptyDatabaseHint = false;
+            OtherDatabases.Clear();
+            HasMoreDatabases = DatabaseListUnavailable = HasOtherDatabases = NoOtherDatabases = false;
+        }
+        UiDispatch.Run(Hide);
+    }
+
+    /// <summary>Click on a listed database: switches this workspace to it (as Open Database + Enter does).</summary>
+    public void OpenOtherDatabase(string database)
+    {
+        if (database == Workspace.Database) return;
+        Workspace.OpenDatabase(database, newWindow: false);
+    }
+
+    /// <summary>"More…" / "Switch database": the Open Database palette (Ctrl+K).</summary>
+    public void OpenDatabasePalette()
+    {
+        var ctx = new CommandContext
+        {
+            CommandId = CommandIds.PaletteOpenDatabase,
+            Scope = CommandScope.Workspace,
+            Workspace = Workspace,
+            Window = (Workspace as WorkspaceViewModel)?.Window,
+        };
+        if (AppServices.IsInitialized && AppServices.Commands.TryExecute(CommandIds.PaletteOpenDatabase, ctx)) return;
+        Workspace.Log("Open Database is not available.");
+    }
+
     // ---- commands ---------------------------------------------------------------------------------------------------
 
     public bool TryExecuteCommand(string commandId, CommandContext context)
@@ -605,7 +753,23 @@ public sealed partial class SidebarViewModel : ObservableObject, ICommandTarget,
     // ---- events -----------------------------------------------------------------------------------------------------
 
     private void OnMetadataChanged(object? sender, MetadataChangedEventArgs e) =>
-        UiDispatch.Run(() => Refresh(debounce: false), System.Windows.Threading.DispatcherPriority.Background);
+        UiDispatch.Run(() =>
+        {
+            Refresh(debounce: false);
+            if (_disposed) return;
+            switch (e.Reason)
+            {
+                case MetadataChangeReason.Refreshed:
+                    CheckEmptyDatabase();
+                    break;
+                case MetadataChangeReason.Cleared:
+                    HideEmptyHint();
+                    break;
+                default:
+                    if (ShowEmptyDatabaseHint && DatabaseContents.SnapshotHasUserObjects(Workspace.Metadata.Current)) HideEmptyHint();
+                    break;
+            }
+        }, System.Windows.Threading.DispatcherPriority.Background);
 
     private void OnStateChanged(object? sender, DbSessionState state) => Rebuild();
 
@@ -631,6 +795,8 @@ public sealed partial class SidebarViewModel : ObservableObject, ICommandTarget,
     {
         if (_disposed) return;
         _disposed = true;
+        _emptyHintVersion++;
+        _emptyHintCts.Cancel();
         CancelSearch();
         _historyCts?.Cancel();
         Workspace.Metadata.Changed -= OnMetadataChanged;
