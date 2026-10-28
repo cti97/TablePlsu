@@ -53,6 +53,32 @@
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <BooleanToVisibilityConverter x:Key="BoolVis" />
+
+        <!-- Link-like row in the empty-database hint -->
+        <Style x:Key="HintLink" TargetType="Button">
+            <Setter Property="Foreground" Value="{DynamicResource c.app.accent}" />
+            <Setter Property="FocusVisualStyle" Value="{DynamicResource FocusVisualStyle}" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="Padding" Value="4,2" />
+            <Setter Property="Margin" Value="-4,0,0,0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="Transparent" CornerRadius="4" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center" RecognizesAccessKey="False" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource c.app.hover}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </UserControl.Resources>
 
     <Grid>
@@ -137,6 +163,37 @@
                 </DataTemplate>
             </ListBox.ItemTemplate>
         </ListBox>
+        <!-- Empty database: the server's other databases instead of a bare tree -->
+        <ScrollViewer x:Name="EmptyHintPanel" Grid.Row="2" Visibility="Collapsed" VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled" AutomationProperties.AutomationId="EmptyDatabaseHint"
+                      AutomationProperties.Name="Empty database">
+            <StackPanel Margin="12,8,8,8">
+                <TextBlock Text="{Binding EmptyDatabaseMessage}" TextWrapping="Wrap" />
+                <StackPanel Visibility="{Binding HasOtherDatabases, Converter={StaticResource BoolVis}}">
+                    <TextBlock Text="Other databases on this server:" Style="{DynamicResource MutedText}" Margin="0,10,0,4" TextWrapping="Wrap" />
+                    <ItemsControl x:Name="OtherDatabasesList" ItemsSource="{Binding OtherDatabases}" Focusable="False"
+                                  AutomationProperties.Name="Other databases">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button Style="{StaticResource HintLink}" Click="OnOtherDatabaseClick" ToolTip="Switch to this database"
+                                        AutomationProperties.Name="{Binding}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Style="{DynamicResource Icon}" FontSize="12" Text="&#xE1D3;" Margin="0,0,6,0" />
+                                        <TextBlock Text="{Binding}" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <Button Style="{StaticResource HintLink}" Content="More… (Ctrl+K)" Click="OnOpenDatabasePalette" Margin="-4,2,0,0"
+                            Visibility="{Binding HasMoreDatabases, Converter={StaticResource BoolVis}}" />
+                </StackPanel>
+                <TextBlock Text="No other databases on this server." Style="{DynamicResource MutedText}" Margin="0,10,0,0" TextWrapping="Wrap"
+                           Visibility="{Binding NoOtherDatabases, Converter={StaticResource BoolVis}}" />
+                <Button Style="{StaticResource HintLink}" Content="Switch database (Ctrl+K)" Click="OnOpenDatabasePalette" Margin="-4,8,0,0"
+                        Visibility="{Binding DatabaseListUnavailable, Converter={StaticResource BoolVis}}" />
+            </StackPanel>
+        </ScrollViewer>
         <TextBlock x:Name="ItemsStatus" Grid.Row="2" Text="{Binding StatusText}" Style="{DynamicResource MutedText}" Margin="12,8"
                    VerticalAlignment="Top" TextWrapping="Wrap" IsHitTestVisible="False" />
 
