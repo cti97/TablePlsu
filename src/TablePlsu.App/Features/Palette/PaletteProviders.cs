@@ -32,19 +32,23 @@ public sealed class DatabaseList
         if (_running is { IsCompleted: false }) return _running;
         return _running = Task.Run(async () =>
         {
-            var names = await session.WithMetadataConnectionAsync(async (conn, c) =>
-            {
-                var list = new List<string>();
-                await using var cmd = new NpgsqlCommand(Query, conn);
-                await using var reader = await cmd.ExecuteReaderAsync(c).ConfigureAwait(false);
-                while (await reader.ReadAsync(c).ConfigureAwait(false)) list.Add(reader.GetString(0));
-                return list;
-            }, ct).ConfigureAwait(false);
+            var names = await QueryNamesAsync(session, ct).ConfigureAwait(false);
             Names = names;
             IsLoaded = true;
-            return (IReadOnlyList<string>)names;
+            return names;
         }, ct);
     }
+
+    /// <summary>Runs <see cref="Query"/> on the session's metadata connection (also used by the connection form).</summary>
+    public static async Task<IReadOnlyList<string>> QueryNamesAsync(DbSession session, CancellationToken ct = default) =>
+        await session.WithMetadataConnectionAsync(async (conn, c) =>
+        {
+            var list = new List<string>();
+            await using var cmd = new NpgsqlCommand(Query, conn);
+            await using var reader = await cmd.ExecuteReaderAsync(c).ConfigureAwait(false);
+            while (await reader.ReadAsync(c).ConfigureAwait(false)) list.Add(reader.GetString(0));
+            return list;
+        }, ct).ConfigureAwait(false);
 }
 
 /// <summary>Builds the palette's own items. All in-memory (metadata snapshot, cached database list, open tabs, commands).</summary>
