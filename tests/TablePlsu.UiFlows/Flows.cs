@@ -18,6 +18,8 @@ public sealed partial class Flows
     readonly string _scratch = "uiflows_" + Guid.NewGuid().ToString("N")[..8];
     const string Db2 = "tableplsu_test_2";
     public const string ConnName = "uiflows-pg";
+    /// <summary>Same server, Database = 'postgres' (empty on the test server): the sidebar's empty-database hint.</summary>
+    public const string MaintConnName = "maintdb";
     public List<FlowResult> Results { get; } = [];
     Ui? _ui;
     AutomationElement? _main;
@@ -33,7 +35,9 @@ public sealed partial class Flows
               "version": 1,
               "connections": [
                 { "id": "uiflows1", "name": "{{ConnName}}", "color": "#34C759", "tag": "local", "host": "{{_pg.Host}}", "port": {{_pg.Port}},
-                  "user": "{{_pg.Username}}", "database": "{{_pg.Database}}", "passwordMode": "none", "sslMode": "disable" }
+                  "user": "{{_pg.Username}}", "database": "{{_pg.Database}}", "passwordMode": "none", "sslMode": "disable" },
+                { "id": "uiflows2", "name": "{{MaintConnName}}", "host": "{{_pg.Host}}", "port": {{_pg.Port}},
+                  "user": "{{_pg.Username}}", "database": "postgres", "passwordMode": "none", "sslMode": "disable" }
               ]
             }
             """);

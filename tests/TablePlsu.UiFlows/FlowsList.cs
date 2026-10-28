@@ -14,6 +14,7 @@ public sealed partial class Flows
 
         Step("welcome.createConnectionForm+Test", CreateConnectionViaForm);
         Step("welcome.importFromUrl", ImportFromUrl);
+        Step("welcome.form database dropdown lists databases", FormDatabaseDropdown);
         Step("welcome.connect", () => { Activate(Main); CloseFormIfOpen(); ConnectFromList(); });
         if (!Title().Contains("/ " + _pg.Database))
         {
@@ -44,6 +45,7 @@ public sealed partial class Flows
         Step("Ctrl+K switch database", SwitchDatabase);
         Step("Ctrl+Shift+K open connection", OpenConnectionPalette);
         Step("autosave survives kill + restore", AutosaveSurvivesKill);
+        Step("sidebar empty-database hint + switch", EmptyDatabaseHint);
     }
 
     // ================= welcome =================
@@ -153,6 +155,33 @@ public sealed partial class Flows
         Check(Value(FirstVisible(Main, Id("DatabaseBox"))) == _pg.Database, "database not prefilled");
         Check(Value(FirstVisible(Main, Id("NameBox"))) == "from-url", "name not prefilled: " + Value(FirstVisible(Main, Id("NameBox"))));
         Click(FirstVisible(Main, And(Type(ControlType.Button), Named("Cancel")))!);
+        Check(WaitTrue(() => FirstVisible(Main, Id("HostBox")) == null, 3000), "form did not close on Cancel");
+    }
+
+    /// <summary>New connection form: host/port/user + "No password", open the Database dropdown with its arrow: it lists the server's databases.</summary>
+    void FormDatabaseDropdown()
+    {
+        Activate(Main);
+        CloseFormIfOpen();
+        var create = WaitFor(() => FirstVisible(Main, And(Type(ControlType.Button), Named("Create Connection…"))), 10000) ?? throw new FlowFailed("no Create Connection button");
+        Click(create);
+        Check(WaitFor(() => FirstVisible(Main, Id("NameBox"))) != null, "form did not open");
+        Fill(FirstVisible(Main, Id("HostBox")), _pg.Host!);
+        Fill(FirstVisible(Main, Id("PortBox")), _pg.Port.ToString());
+        Fill(FirstVisible(Main, Id("UserBox")), _pg.Username!);
+        SelectComboItem(FirstVisible(Main, Id("PasswordModeBox")), "No password");
+        var db = FirstVisible(Main, Id("DatabaseBox")) ?? throw new FlowFailed("no Database field");
+        var typed = Value(db);
+        var r = db.Current.BoundingRectangle;
+        ClickAt((int)(r.Right - 8), (int)(r.Top + r.Height / 2)); // the dropdown arrow
+        List<string> Items() => U.Windows().SelectMany(w => All(w, Type(ControlType.ListItem)))
+            .Where(i => !Safe(() => i.Current.IsOffscreen)).Select(Name).ToList();
+        var listed = WaitTrue(() => Items().Contains(_pg.Database!), 10000);
+        var items = Items();
+        U.Keys("Esc");
+        Check(listed, $"Database dropdown does not list {_pg.Database} (items: {string.Join(", ", items)})");
+        Check(Value(db) == typed, $"opening the dropdown changed the Database text '{typed}' to '{Value(db)}'");
+        Click(FirstVisible(Main, And(Type(ControlType.Button), Named("Cancel"))) ?? throw new FlowFailed("no Cancel button"));
         Check(WaitTrue(() => FirstVisible(Main, Id("HostBox")) == null, 3000), "form did not close on Cancel");
     }
 
@@ -658,5 +687,50 @@ public sealed partial class Flows
             found = Safe(() => EditorText().Contains(marker));
         }
         Check(found, "restored tabs do not contain the autosaved text");
+    }
+
+    /// <summary>
+    /// Ctrl+Shift+K the saved connection whose database is the empty 'postgres': the sidebar shows the empty-database
+    /// hint listing the test database; clicking it switches the window there and the sidebar lists its tables.
+    /// </summary>
+    void EmptyDatabaseHint()
+    {
+        Activate(Main);
+        var before = U.MainWindows().Count;
+        U.Keys("Ctrl+Shift+K");
+        WaitFor(Palette, 3000);
+        Check(Palette() != null, "Ctrl+Shift+K did not open the connection list");
+        U.Type(MaintConnName, 10);
+        Thread.Sleep(400);
+        U.Keys("Enter");
+        var w2 = WaitFor(() => U.MainWindows().Count > before ? U.MainWindows().FirstOrDefault(w => !Automation.Compare(w, Main)) : null, 8000)
+                 ?? throw new FlowFailed("Enter did not open a new window");
+        try
+        {
+            Activate(w2);
+            var hint = WaitFor(() => FirstVisible(w2, Id("EmptyDatabaseHint")), 20000)
+                       ?? throw new FlowFailed("no empty-database hint (title '" + Name(w2) + "')");
+            Check(FirstVisible(w2, Id("ItemsList")) == null, "the item tree is visible alongside the hint");
+            var target = WaitFor(() => FirstVisible(hint, And(Type(ControlType.Button), Named(_pg.Database!))), 10000)
+                         ?? throw new FlowFailed($"hint does not list {_pg.Database} (buttons: {string.Join(", ", Visible(hint, Type(ControlType.Button)).Select(Name))})");
+            Click(target);
+            Check(WaitTrue(() => Name(w2).Contains("/ " + _pg.Database) && Name(First(w2, Id("ConnectionStatus"))) == "connected", 15000),
+                "clicking the database did not switch the window (title '" + Name(w2) + "')");
+            Check(WaitTrue(() => FirstVisible(w2, Id("EmptyDatabaseHint")) == null && FirstVisible(w2, Id("ItemsList")) != null, 10000),
+                "hint still shown after switching");
+            Activate(w2);
+            U.Keys("Ctrl+Shift+F");
+            var search = FirstVisible(w2, Id("ItemsSearch")) ?? throw new FlowFailed("no sidebar search");
+            Check(WaitTrue(() => HasFocus(search), 2000), "Ctrl+Shift+F did not focus the sidebar search");
+            U.Keys("Ctrl+A");
+            U.Type("customers", 20);
+            Check(WaitTrue(() => Visible(w2, Id("ItemText")).Any(t => Name(t) == "customers"), 5000), "sidebar does not list customers after the switch");
+        }
+        finally
+        {
+            Safe(() => { ((WindowPattern)w2.GetCurrentPattern(WindowPattern.Pattern)).Close(); return true; });
+            WaitTrue(() => U.MainWindows().Count == before, 5000);
+            Activate(Main);
+        }
     }
 }

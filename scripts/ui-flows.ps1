@@ -2,6 +2,8 @@
 # Starts TablePlsu.App.exe on a throwaway TABLEPLSU_ROOT with one saved connection to the test Postgres, drives it with
 # SendInput + UI Automation (tests/TablePlsu.UiFlows), and prints a pass/fail matrix. Needs an interactive, unlocked
 # desktop; do not touch the mouse/keyboard while it runs. Creates (and drops) a scratch table and database tableplsu_test_2.
+# The saved connections are the test DB and "maintdb" (same server, database postgres, which must stay empty: the sidebar
+# empty-database hint flow). Flows live in tests/TablePlsu.UiFlows/FlowsList.cs (RunAll).
 # Usage: scripts/ui-flows.ps1 [-Exe artifacts/publish/TablePlsu.App.exe] [-Only "flow name,flow name"] [-Publish]
 param(
     [string]$Exe = "artifacts/publish/TablePlsu.App.exe",
