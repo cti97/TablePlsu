@@ -127,6 +127,27 @@ public class TableDataIntegrationTests(ITestOutputHelper output)
             Assert.Equal(7, Convert.ToInt32(await ScalarAsync(conn, $"SELECT qty FROM public.{table} WHERE name = 'd'")));
             Assert.Equal(0L, await ScalarAsync(conn, $"SELECT count(*) FROM public.{table} WHERE id = 3"));
 
+            // 2b) RETURNING: the committed rows come back as the server stored them (DEFAULT filled, text cast).
+            var pr = new PendingChanges(4, [0]);
+            var fresh = (await TableDataAccess.LoadPageAsync(conn, TableQueryBuilder.BuildSelect(q))).Rows;
+            pr.AttachRows(fresh);
+            pr.SetCell(fresh[0], 2, "41");
+            pr.InsertRow([null, "e", null, null], [1]);
+            var withReturning = ChangeSqlGenerator.Generate(target, pr, returnRows: true);
+            Assert.Equal($"UPDATE public.{table} SET qty = '41' WHERE id = 1 RETURNING id, name, qty, at", withReturning[0].LiteralSql);
+            Assert.All(withReturning, s => Assert.True(s.ReturnsRows));
+            result = await TableDataAccess.CommitAsync(conn, withReturning);
+            Assert.True(result.Success, result.Error);
+            Assert.Equal([1L, 1L], result.Affected);
+            var updatedRow = Assert.Single(result.Returned[0]!);
+            Assert.Equal(41, updatedRow[2]);
+            var insertedRow = Assert.Single(result.Returned[1]!);
+            Assert.Equal("e", insertedRow[1]);
+            Assert.Equal(7, insertedRow[2]);
+            Assert.IsType<int>(insertedRow[0]);
+            await using (var c = new NpgsqlCommand($"UPDATE public.{table} SET qty = 100 WHERE id = 1; DELETE FROM public.{table} WHERE name = 'e'", conn))
+                await c.ExecuteNonQueryAsync();
+
             // 3) A row that vanished makes the UPDATE affect 0 rows: rolled back.
             var p2 = new PendingChanges(4, [0]);
             var ghost = new object?[] { 999, "x", 1, null };

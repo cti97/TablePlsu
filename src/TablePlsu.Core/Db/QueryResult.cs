@@ -3,7 +3,20 @@ using TablePlsu.Core.Sql;
 namespace TablePlsu.Core.Db;
 
 /// <summary>A result-set column. <see cref="DataTypeName"/> is the PostgreSQL type name ("bigint", "text", "jsonb"…).</summary>
-public sealed record ResultColumn(int Ordinal, string Name, string DataTypeName, uint TypeOid);
+public sealed record ResultColumn(int Ordinal, string Name, string DataTypeName, uint TypeOid)
+{
+    /// <summary>
+    /// Provenance from the server's RowDescription: the OID of the table (or view) the column was read from, 0 for an
+    /// expression, aggregate or set-operation column. Only filled for editor SELECT results (see DbSession).
+    /// </summary>
+    public uint TableOid { get; init; }
+
+    /// <summary>The source column's <c>pg_attribute.attnum</c> (1-based), 0 when <see cref="TableOid"/> is 0.</summary>
+    public short AttributeNumber { get; init; }
+
+    /// <summary>True when the column is a plain column of a relation (not an expression).</summary>
+    public bool IsTableColumn => TableOid != 0 && AttributeNumber > 0;
+}
 
 /// <summary>A RAISE NOTICE / WARNING / INFO message received while a statement ran.</summary>
 public sealed record QueryNotice(string Severity, string Message, string? Detail, string? Hint);

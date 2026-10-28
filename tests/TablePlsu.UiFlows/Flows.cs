@@ -90,6 +90,7 @@ public sealed partial class Flows
         {
             using var c = Open();
             Exec(c, $"drop table if exists public.{_scratch}");
+            Exec(c, $"drop table if exists public.{_scratch}_res");
         }
         catch { }
         try

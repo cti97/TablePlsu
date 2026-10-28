@@ -334,6 +334,7 @@ public sealed class DbSession : IAsyncDisposable
                 var columns = new ResultColumn[reader.FieldCount];
                 for (var c = 0; c < columns.Length; c++)
                     columns[c] = new ResultColumn(c, reader.GetName(c), reader.GetDataTypeName(c), reader.GetDataTypeOID(c));
+                await AddSourcesAsync(reader, columns).ConfigureAwait(false);
                 result.Columns = columns;
 
                 var batch = new List<object?[]>(Math.Min(batchSize, 1024));
@@ -399,6 +400,28 @@ public sealed class DbSession : IAsyncDisposable
 
         progress?.Report(new ResultBatch(index, stmt, result.Columns, [], result.Rows.Count, true, result));
         return result;
+    }
+
+    /// <summary>
+    /// Fills each column's provenance (table OID + attnum) from the RowDescription. Without CommandBehavior.KeyInfo
+    /// Npgsql builds this from the message it already has (no catalog query, no extra connection). Best effort: on
+    /// failure the columns simply stay without a source (and the result read-only).
+    /// </summary>
+    private static async Task AddSourcesAsync(NpgsqlDataReader reader, ResultColumn[] columns)
+    {
+        try
+        {
+            var schema = await reader.GetColumnSchemaAsync().ConfigureAwait(false);
+            for (var c = 0; c < columns.Length && c < schema.Count; c++)
+            {
+                if (schema[c] is not Npgsql.Schema.NpgsqlDbColumn col || col.TableOID == 0 || col.ColumnAttributeNumber is not > 0) continue;
+                columns[c] = columns[c] with { TableOid = col.TableOID, AttributeNumber = col.ColumnAttributeNumber.Value };
+            }
+        }
+        catch (Exception ex) when (ex is NpgsqlException or InvalidOperationException or NotSupportedException)
+        {
+            // Provenance is optional.
+        }
     }
 
     private static async Task DisposeReaderAsync(NpgsqlDataReader reader, bool swallowCancel)

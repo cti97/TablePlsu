@@ -10,13 +10,16 @@ public sealed record ChangeTarget(string Schema, string Table, IReadOnlyList<str
 /// Turns <see cref="PendingChanges"/> into statements (spec §8): UPDATE … SET … WHERE pk = …, DELETE … WHERE pk = …,
 /// INSERT … VALUES (…), in that order. Values are parameters (<see cref="SqlCommandSpec.Sql"/>) with a literal-rendered
 /// twin for the Preview window (<see cref="SqlCommandSpec.LiteralSql"/>). UPDATE and DELETE expect exactly one row.
+/// With <c>returnRows</c>, UPDATE and INSERT end with <c>RETURNING</c> the target's columns, so the caller gets the rows
+/// exactly as the transaction wrote them (defaults, triggers, server-side casts) instead of the text that was typed.
 /// </summary>
 public static class ChangeSqlGenerator
 {
-    public static IReadOnlyList<SqlCommandSpec> Generate(ChangeTarget target, PendingChanges changes)
+    public static IReadOnlyList<SqlCommandSpec> Generate(ChangeTarget target, PendingChanges changes, bool returnRows = false)
     {
         var result = new List<SqlCommandSpec>();
         var table = SqlIdent.Qualified(target.Schema, target.Table);
+        var returning = returnRows ? " RETURNING " + string.Join(", ", target.Columns.Select(SqlIdent.QuoteIfNeeded)) : null;
 
         foreach (var u in changes.Updates)
         {
@@ -29,7 +32,8 @@ public static class ChangeSqlGenerator
                 b.AppendIdent(target.Columns[col]).Append(" = ").AppendValue(value);
             }
             AppendKeyWhere(b, target, u.Key);
-            result.Add(b.Build() with { ExpectedRows = 1 });
+            if (returning is not null) b.Append(returning);
+            result.Add(b.Build() with { ExpectedRows = 1, ReturnsRows = returning is not null });
         }
 
         foreach (var d in changes.Deletes)
@@ -57,7 +61,8 @@ public static class ChangeSqlGenerator
                 }
                 b.Append(")");
             }
-            result.Add(b.Build());
+            if (returning is not null) b.Append(returning);
+            result.Add(b.Build() with { ReturnsRows = returning is not null });
         }
         return result;
     }

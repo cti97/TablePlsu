@@ -86,8 +86,8 @@
             </DockPanel>
         </Border>
 
-        <!-- Read-only banner -->
-        <Border DockPanel.Dock="Top" Background="{DynamicResource c.app.statusBar}" BorderBrush="{DynamicResource c.app.border}" BorderThickness="0,0,0,1"
+        <!-- Read-only banner (flashes when the user tries to edit) -->
+        <Border x:Name="ReadOnlyBanner" AutomationProperties.AutomationId="ReadOnlyBanner" DockPanel.Dock="Top" Background="{DynamicResource c.app.statusBar}" BorderBrush="{DynamicResource c.app.border}" BorderThickness="0,0,0,1"
                 Padding="10,5" Visibility="{Binding HasReadOnlyReason, Converter={x:Static infra:BoolToVisibilityConverter.Instance}}">
             <StackPanel Orientation="Horizontal">
                 <TextBlock Style="{DynamicResource Icon}" Text="&#xE72E;" Margin="0,0,8,0" Foreground="{DynamicResource c.app.mutedForeground}" />

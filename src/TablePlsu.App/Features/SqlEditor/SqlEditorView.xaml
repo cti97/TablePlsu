@@ -147,15 +147,33 @@
                     <TextBlock DockPanel.Dock="Right" Text="limited by row limit" Foreground="{DynamicResource c.app.warning}" Margin="8,0,0,0"
                                Visibility="{Binding SelectedResult.Truncated, Converter={x:Static infra:BoolToVisibilityConverter.Instance}, FallbackValue=Collapsed}"
                                ToolTip="Fetching stopped at the row limit; more rows exist. Change the limit beside Run." />
+                    <TextBlock DockPanel.Dock="Right" Foreground="{DynamicResource c.app.warning}" Margin="8,0,0,0"
+                               Visibility="{Binding SelectedResult.HasPendingChanges, Converter={x:Static infra:BoolToVisibilityConverter.Instance}, FallbackValue=Collapsed}">
+                        <Run Text="{Binding SelectedResult.PendingCount, Mode=OneWay}" /><Run Text=" pending" />
+                    </TextBlock>
                     <TextBlock x:Name="ResultSummary" AutomationProperties.AutomationId="ResultSummary" Text="{Binding SelectedResult.Summary}"
                                Foreground="{DynamicResource c.app.statusBarForeground}" />
                 </DockPanel>
             </Border>
 
             <Grid>
-                <res:ResultGrid x:Name="Grid" IsReadOnly="True"
-                                ResultColumns="{Binding SelectedResult.Columns}" Rows="{Binding SelectedResult.Rows}"
-                                Visibility="{Binding SelectedResult.ShowData, Converter={x:Static infra:BoolToVisibilityConverter.Instance}, FallbackValue=Collapsed}" />
+                <!-- Data view: its DataContext is the selected result tab (the Grid command scope's target). -->
+                <DockPanel DataContext="{Binding SelectedResult}"
+                           Visibility="{Binding ShowData, Converter={x:Static infra:BoolToVisibilityConverter.Instance}, FallbackValue=Collapsed}">
+                    <!-- Why the result can't be edited (flashes when the user tries). -->
+                    <Border x:Name="ReadOnlyBar" AutomationProperties.AutomationId="ReadOnlyBar" DockPanel.Dock="Top"
+                            Background="{DynamicResource c.app.statusBar}" BorderBrush="{DynamicResource c.app.border}" BorderThickness="0,0,0,1" Padding="8,2"
+                            Visibility="{Binding HasReadOnlyReason, Converter={x:Static infra:BoolToVisibilityConverter.Instance}, FallbackValue=Collapsed}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{DynamicResource Icon}" Text="&#xE72E;" FontSize="11" Margin="0,0,6,0" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource c.app.mutedForeground}" />
+                            <TextBlock x:Name="ReadOnlyText" AutomationProperties.AutomationId="ReadOnlyText" Text="{Binding ReadOnlyText}"
+                                       Foreground="{DynamicResource c.app.statusBarForeground}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Border>
+                    <res:ResultGrid x:Name="Grid" IsReadOnly="{Binding IsReadOnlyGrid, FallbackValue=True}" RowStateProvider="{Binding}"
+                                    ResultColumns="{Binding Columns}" Rows="{Binding Rows}" />
+                </DockPanel>
                 <TextBox x:Name="MessagesBox" IsReadOnly="True" BorderThickness="0" Padding="8,6" TextWrapping="Wrap" AcceptsReturn="True"
                          VerticalScrollBarVisibility="Auto" FontFamily="{DynamicResource MonoFont}"
                          Background="{DynamicResource c.app.window}" Foreground="{DynamicResource c.app.windowForeground}"

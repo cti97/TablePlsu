@@ -143,6 +143,9 @@ public sealed class PendingChanges
 
     public RowKey KeyFromValues(IReadOnlyList<object?> row) => new(_keyColumns.Select(c => row[c]));
 
+    /// <summary>The attached (loaded) row array identified by <paramref name="key"/>, or null when it is not loaded.</summary>
+    public object?[]? AttachedRow(RowKey key) => _attached.GetValueOrDefault(key);
+
     private RowKey KeyOf(object?[] row)
     {
         if (_keyOf.TryGetValue(row, out var key)) return key;

@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using TablePlsu.App.Features.Results;
 using TablePlsu.App.Infrastructure;
 using TablePlsu.Core.Data;
 
@@ -9,21 +10,21 @@ namespace TablePlsu.App.Features.TableData;
 /// <summary>
 /// Code review of staged changes (spec §8 Preview, Ctrl+Shift+P): a non-modal window listing the generated SQL with the
 /// values rendered as literals, live-updating while it is open, with Commit / Discard. After a failed commit the failing
-/// statement is highlighted and the error is shown above the list.
+/// statement is highlighted and the error is shown above the list. Used by table tabs and editor result tabs.
 /// </summary>
 public sealed class ChangesPreviewWindow : Window
 {
-    private readonly TableTabViewModel _vm;
+    private readonly IStagedChangesSource _vm;
     private readonly StackPanel _list = new();
     private readonly TextBlock _header = new() { FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 6) };
     private readonly TextBlock _error = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 8), Visibility = Visibility.Collapsed };
     private readonly ScrollViewer _scroll;
     private readonly Button _commit;
 
-    public ChangesPreviewWindow(TableTabViewModel vm)
+    public ChangesPreviewWindow(IStagedChangesSource vm)
     {
         _vm = vm;
-        Title = $"Preview changes — {vm.Schema}.{vm.Name}";
+        Title = $"Preview changes — {vm.ChangesTitle}";
         Width = 760;
         Height = 480;
         ShowInTaskbar = false;

@@ -7,6 +7,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using ICSharpCode.AvalonEdit.Document;
 using TablePlsu.App.Features.Workspace;
 using TablePlsu.App.Infrastructure;
+using TablePlsu.Core.Commands;
 using TablePlsu.Core.Db;
 using TablePlsu.Core.Editors;
 using TablePlsu.Core.History;
@@ -38,7 +39,7 @@ public interface ISqlEditorView
 /// cancel, the per-connection row limit, error location, history + console logging and autosave through
 /// <see cref="EditorSessionManager"/>. Run logic is UI-free so it can be driven from tests.
 /// </summary>
-public sealed partial class SqlEditorTabViewModel : TabViewModelBase
+public sealed partial class SqlEditorTabViewModel : TabViewModelBase, ICommandTarget
 {
     /// <summary>With more result tabs than this, a run collapses into one Messages tab (spec §10).</summary>
     public const int MaxResultTabs = 100;
@@ -74,6 +75,7 @@ public sealed partial class SqlEditorTabViewModel : TabViewModelBase
             ScrollY = state.ScrollOffsetY;
             if (state.LinkedFilePath is { Length: > 0 } p) SetLinkedFile(p);
         }
+        Results.CollectionChanged += OnResultsChanged;
         RowLimit = sessions?.RowLimit ?? (AppServices.IsInitialized ? AppServices.Current.Editor.DefaultRowLimit : 1000);
         if (sessions is not null) sessions.RowLimitChanged += OnSharedRowLimitChanged;
     }
@@ -125,6 +127,78 @@ public sealed partial class SqlEditorTabViewModel : TabViewModelBase
 
     [ObservableProperty]
     public partial ResultTabViewModel? SelectedResult { get; set; }
+
+    // ---- inline result edits (spec §10 "Edit results inline") ---------------------------------------------------
+
+    /// <summary>Asks before staged result edits are thrown away (re-run, close). Replaceable in tests.</summary>
+    public Func<string, bool> ConfirmDiscard { get; set; } = message => Dialogs.Confirm(message, "Discard changes?", "Discard", danger: true);
+
+    /// <summary>Staged result edits across every result tab.</summary>
+    public int PendingResultChanges => Results.Sum(r => r.PendingCount);
+
+    /// <summary>The result whose staged edits Ctrl+S / Preview / Discard / Undo act on: the selected result when it has
+    /// some, else the first result that has.</summary>
+    public ResultTabViewModel? PendingResult =>
+        SelectedResult is { HasPendingChanges: true } selected ? selected : Results.FirstOrDefault(r => r.HasPendingChanges) ?? SelectedResult;
+
+    private void OnResultsChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+    {
+        if (e.OldItems is not null)
+            foreach (ResultTabViewModel r in e.OldItems) r.PropertyChanged -= OnResultPropertyChanged;
+        if (e.NewItems is not null)
+            foreach (ResultTabViewModel r in e.NewItems) r.PropertyChanged += OnResultPropertyChanged;
+        UpdatePendingState();
+    }
+
+    private void OnResultPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(ResultTabViewModel.HasPendingChanges) or nameof(ResultTabViewModel.PendingCount) or nameof(ResultTabViewModel.IsCommitting))
+            UpdatePendingState();
+    }
+
+    private void UpdatePendingState()
+    {
+        HasPendingChanges = Results.Any(r => r.HasPendingChanges);
+        IsBusy = IsRunning || Results.Any(r => r.IsCommitting);
+        OnPropertyChanged(nameof(PendingResultChanges));
+    }
+
+    /// <summary>Drops the current result tabs (re-run in split mode). False when the user keeps staged edits.</summary>
+    private bool ClearResults()
+    {
+        var pending = PendingResultChanges;
+        if (pending > 0 && !ConfirmDiscard($"Discard {pending} pending change{(pending == 1 ? "" : "s")} to the results?")) return false;
+        foreach (var r in Results) r.Close();
+        Results.Clear();
+        SelectedResult = null;
+        return true;
+    }
+
+    public override Task CommitAsync() => PendingResult?.CommitCoreAsync() ?? Task.CompletedTask;
+
+    public override void PreviewChanges() => PendingResult?.PreviewChanges();
+
+    public override void DiscardChanges() => PendingResult?.DiscardChanges();
+
+    /// <summary>Workspace-scope Undo/Redo for staged result edits (focus outside text input, i.e. in the grid).</summary>
+    public bool TryExecuteCommand(string commandId, CommandContext context)
+    {
+        switch (commandId)
+        {
+            case CommandIds.EditUndo when !context.IsTextInputFocused:
+                return PendingResult?.Undo() == true;
+            case CommandIds.EditRedo when !context.IsTextInputFocused:
+                return PendingResult?.Redo() == true;
+        }
+        return false;
+    }
+
+    public override bool CanCloseNow(TabCloseReason reason)
+    {
+        var pending = PendingResultChanges;
+        if (pending == 0 || reason == TabCloseReason.WorkspaceClosing) return true;
+        return ConfirmDiscard($"{DisplayTitle} has {pending} uncommitted change{(pending == 1 ? "" : "s")} to its results. Close and discard them?");
+    }
 
     [ObservableProperty]
     public partial bool IsRunning { get; private set; }
@@ -205,17 +279,13 @@ public sealed partial class SqlEditorTabViewModel : TabViewModelBase
         var ws = Workspace;
         PushText();
         _sessions?.FlushInBackground();
-        SetErrorSpan(null);
 
         var statements = StatementSplitter.Split(target.Sql);
         if (statements.Count == 0) return;
         var settings = AppServices.IsInitialized ? AppServices.Current : new AppSettings();
         var append = settings.Editor.ResultViewMode == ResultViewMode.Append;
-        if (!append)
-        {
-            Results.Clear();
-            SelectedResult = null;
-        }
+        if (!append && !ClearResults()) return;
+        SetErrorSpan(null);
         IsResultsVisible = true;
 
         if (ws.State != DbSessionState.Connected)
@@ -419,7 +489,7 @@ public sealed partial class SqlEditorTabViewModel : TabViewModelBase
             }
             if (_tabs.TryGetValue(batch.StatementIndex, out var tab)) return tab;
             tab = new ResultTabViewModel(batch.StatementIndex, TitleOf(batch),
-                new SqlStatementInfo(batch.Statement.Text, target.BaseOffset + batch.Statement.Start)) { RowLimit = rowLimit };
+                new SqlStatementInfo(batch.Statement.Text, target.BaseOffset + batch.Statement.Start)) { RowLimit = rowLimit, Workspace = ws };
             _tabs[batch.StatementIndex] = tab;
             owner.Results.Add(tab);
             owner.SelectedResult ??= tab;
@@ -529,6 +599,7 @@ public sealed partial class SqlEditorTabViewModel : TabViewModelBase
         PushText();
         _closed = true;
         if (IsRunning) Workspace.Session.Cancel();
+        foreach (var r in Results) r.Close();
         if (_sessions is not null)
         {
             _sessions.RowLimitChanged -= OnSharedRowLimitChanged;

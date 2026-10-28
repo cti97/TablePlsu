@@ -32,7 +32,7 @@ public interface ITableDataView
 /// <see cref="TableQueryBuilder"/>; editing (tables with a primary key only) staged in <see cref="PendingChanges"/> with
 /// undo/redo; Preview / Discard / Commit (one transaction, through Safe Mode); Data / Structure / Indexes bottom tabs.
 /// </summary>
-public sealed partial class TableTabViewModel : TabViewModelBase, ICommandTarget, IRowStateProvider
+public sealed partial class TableTabViewModel : TabViewModelBase, ICommandTarget, IRowStateProvider, IEditableGridModel, IStagedChangesSource
 {
     private static readonly Dictionary<string, FilterBarState> FilterMemory = new(StringComparer.Ordinal);
 
@@ -109,6 +109,18 @@ public sealed partial class TableTabViewModel : TabViewModelBase, ICommandTarget
     public partial string? ReadOnlyReason { get; private set; }
 
     public bool HasReadOnlyReason => ReadOnlyReason is not null;
+
+    /// <summary>Raised when the user tries to edit while the grid is read-only (the view flashes the reason banner).</summary>
+    public event EventHandler? ReadOnlyAttempted;
+
+    /// <summary>How many read-only attempts were reported (tests).</summary>
+    public int ReadOnlyAttempts { get; private set; }
+
+    public void NotifyReadOnlyAttempt()
+    {
+        ReadOnlyAttempts++;
+        ReadOnlyAttempted?.Invoke(this, EventArgs.Empty);
+    }
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasError))]
@@ -545,206 +557,66 @@ public sealed partial class TableTabViewModel : TabViewModelBase, ICommandTarget
         Load();
     }
 
-    // ---- editing --------------------------------------------------------------------------------------------------
+    // ---- editing (shared with editor result tabs through GridEditing) ---------------------------------------------
 
-    public RowState GetRowState(object?[] row) => Pending?.GetRowState(row) switch
-    {
-        PendingRowState.New => RowState.New,
-        PendingRowState.Modified => RowState.Modified,
-        PendingRowState.Deleted => RowState.Deleted,
-        _ => RowState.Unchanged,
-    };
+    public RowState GetRowState(object?[] row) => GridEditing.RowStateOf(Pending, row);
 
     public bool IsCellModified(object?[] row, int columnIndex) => Pending?.IsCellModified(row, columnIndex) == true;
 
+    ResultGrid? IGridEditHost.EditGrid => View?.Grid;
+
+    ColumnInfo? IGridEditHost.ColumnInfoAt(int columnIndex) =>
+        Columns is not null && columnIndex >= 0 && columnIndex < Columns.Count ? Info?.FindColumn(Columns[columnIndex].Name) : null;
+
+    IReadOnlyList<string> IGridEditHost.PrimaryKeyColumns => Info?.PrimaryKey ?? [];
+
+    void IGridEditHost.ScrollToRow(object?[] row) => ScrollTo(row);
+
     /// <summary>A column that can't be written (generated, or unknown to the metadata).</summary>
-    public bool IsColumnReadOnly(int columnIndex)
-    {
-        if (Columns is null || columnIndex < 0 || columnIndex >= Columns.Count) return true;
-        var col = Info?.FindColumn(Columns[columnIndex].Name);
-        return col is null || col.IsGenerated;
-    }
+    public bool IsColumnReadOnly(int columnIndex) => GridEditing.IsColumnReadOnly(this, columnIndex);
 
     /// <summary>
     /// Staged changes can be modified: an editable table that is not committing. While a commit runs nothing may be
     /// staged, because a successful commit clears everything that is staged (an edit made meanwhile would be lost).
     /// </summary>
-    private bool CanStage => IsEditable && Pending is not null && !IsCommitting;
+    public bool CanStage => IsEditable && Pending is not null && !IsCommitting;
 
-    public bool CanEditCell(object?[] row, int columnIndex) =>
-        CanStage && !Pending!.IsDeleted(row) && !IsColumnReadOnly(columnIndex);
+    public bool CanEditCell(object?[] row, int columnIndex) => GridEditing.CanEditCell(this, row, columnIndex);
 
     /// <summary>Grid edit commit: stage the typed text. Returns the value the grid should show.</summary>
-    public object? CommitCellEdit(object?[] row, int columnIndex, string text)
-    {
-        if (!CanEditCell(row, columnIndex)) return row[columnIndex];
-        Pending!.SetCell(row, columnIndex, InputFor(columnIndex, text));
-        return row[columnIndex];
-    }
-
-    /// <summary>Typed text for a column (a zone-less timestamptz is UTC, as displayed; see <see cref="PgInput"/>).</summary>
-    private string InputFor(int columnIndex, string text) =>
-        Columns is not null && columnIndex < Columns.Count ? PgInput.ForColumn(Columns[columnIndex].DataTypeName, text) : text;
-
-    /// <summary>A pasted field: the text NULL is SQL NULL (what the grid shows and copies for NULL), anything else is typed text.</summary>
-    private object? PastedValue(int columnIndex, string field) => field == "NULL" ? null : InputFor(columnIndex, field);
+    public object? CommitCellEdit(object?[] row, int columnIndex, string text) => GridEditing.CommitCellEdit(this, row, columnIndex, text);
 
     /// <summary>Set Value menu: applies <paramref name="value"/> to every selected cell (one undo step).</summary>
-    public void SetSelectedCells(object? value)
-    {
-        if (!CanStage || View is null) return;
-        var cells = View.Grid.GetSelectedCells();
-        if (cells.Count == 0 && View.Grid.CurrentCellIndex is { } cur) cells = [cur];
-        using (Pending!.BeginBatch())
-        {
-            foreach (var (r, c) in cells)
-            {
-                if (r < 0 || r >= Rows.Count) continue;
-                var row = Rows[r];
-                if (CanEditCell(row, c)) Pending.SetCell(row, c, value);
-            }
-        }
-    }
+    public void SetSelectedCells(object? value) => GridEditing.SetSelectedCells(this, value);
 
     /// <summary>Whether the selection's current column is a date/time column (offers NOW()).</summary>
-    public bool CurrentColumnIsTemporal()
-    {
-        if (View?.Grid.CurrentCellIndex is not { } cur || Columns is null || cur.ColumnIndex >= Columns.Count) return false;
-        var t = Columns[cur.ColumnIndex].DataTypeName;
-        return t.StartsWith("timestamp", StringComparison.Ordinal) || t.StartsWith("date", StringComparison.Ordinal) || t.StartsWith("time", StringComparison.Ordinal);
-    }
+    public bool CurrentColumnIsTemporal() => GridEditing.CurrentColumnIsTemporal(this);
 
     /// <summary>Ctrl+I: a new row with every column DEFAULT.</summary>
-    public object?[]? InsertRow()
-    {
-        if (!CanStage) return null;
-        var row = Pending!.InsertRow();
-        ScrollTo(row);
-        return row;
-    }
+    public object?[]? InsertRow() => GridEditing.InsertRow(this);
 
     /// <summary>Ctrl+D: copies of the selected rows (PK / identity / generated columns left to DEFAULT when they have one).</summary>
     public void DuplicateSelectedRows()
     {
-        if (!CanStage || View is null || Columns is null) return;
+        if (View is null) return;
         DuplicateRows(View.Grid.GetSelectedRows());
     }
 
-    /// <summary>
-    /// Stages copies of <paramref name="rows"/>. Values the grid only holds as a lossy preview (a truncated bytea,
-    /// an unreadable value) are not copied: those cells stay DEFAULT instead of inserting the preview text.
-    /// </summary>
-    public void DuplicateRows(IReadOnlyList<object?[]> rows)
-    {
-        if (!CanStage || Columns is null || rows.Count == 0) return;
-        var setColumns = DuplicateColumns();
-        object?[]? last = null;
-        using (Pending!.BeginBatch())
-        {
-            foreach (var row in rows)
-            {
-                var cols = setColumns.Where(c => row[c] is not SqlDefault && !DbValueConverter.IsLossyPreview(row[c])).ToList();
-                last = Pending.InsertRow(row, cols);
-            }
-        }
-        if (last is not null) ScrollTo(last);
-    }
-
-    private List<int> DuplicateColumns()
-    {
-        var result = new List<int>();
-        var pk = Info?.PrimaryKey ?? [];
-        for (var i = 0; i < Columns!.Count; i++)
-        {
-            var col = Info?.FindColumn(Columns[i].Name);
-            if (col is null || col.IsGenerated || col.Identity is not null) continue;
-            if (pk.Contains(col.Name) && col.Default is not null) continue;
-            result.Add(i);
-        }
-        return result;
-    }
+    /// <summary>Stages copies of <paramref name="rows"/> (see <see cref="GridEditing.DuplicateRows"/>).</summary>
+    public void DuplicateRows(IReadOnlyList<object?[]> rows) => GridEditing.DuplicateRows(this, rows);
 
     /// <summary>Delete: stage deletes of the selected rows (restores them when all are already deleted).</summary>
-    public void DeleteSelectedRows()
-    {
-        if (!CanStage || View is null) return;
-        var rows = View.Grid.GetSelectedRows();
-        if (rows.Count == 0) return;
-        if (rows.All(Pending!.IsDeleted)) Pending.RestoreRows(rows);
-        else Pending.DeleteRows(rows);
-    }
+    public void DeleteSelectedRows() => GridEditing.DeleteSelectedRows(this);
 
-    /// <summary>
-    /// Ctrl+V: clipboard TSV as new rows. Fields map to columns from <paramref name="startColumn"/> (default: the current
-    /// cell's column), except whole rows (at least one field per column), which map from the first column. Empty fields
-    /// stay DEFAULT; the text NULL is SQL NULL.
-    /// </summary>
-    public int PasteAsNewRows(string? text, int? startColumn = null)
-    {
-        if (!CanStage || Columns is null) return 0;
-        var lines = TsvParser.Parse(text);
-        if (lines.Count == 0) return 0;
-        var start = startColumn ?? View?.Grid.CurrentCellIndex?.ColumnIndex ?? 0;
-        if (start < 0 || start >= Columns.Count || lines.Max(l => l.Length) >= Columns.Count) start = 0;
-        object?[]? last = null;
-        using (Pending!.BeginBatch())
-        {
-            foreach (var fields in lines)
-            {
-                var values = new object?[Columns.Count];
-                var set = new List<int>();
-                for (var j = 0; j < fields.Length && start + j < Columns.Count; j++)
-                {
-                    var c = start + j;
-                    if (fields[j].Length == 0 || IsColumnReadOnly(c)) continue;
-                    values[c] = PastedValue(c, fields[j]);
-                    set.Add(c);
-                }
-                last = Pending.InsertRow(values, set);
-            }
-        }
-        if (last is not null) ScrollTo(last);
-        return lines.Count;
-    }
+    /// <summary>Ctrl+V: clipboard TSV as new rows (see <see cref="GridEditing.PasteAsNewRows"/>).</summary>
+    public int PasteAsNewRows(string? text, int? startColumn = null) => GridEditing.PasteAsNewRows(this, text, startColumn);
 
     /// <summary>Ctrl+Shift+V: clipboard TSV into the cells from the current cell (one value fills every selected cell).</summary>
-    public int PasteIntoCells(string? text)
-    {
-        if (!CanStage || View is null || Columns is null) return 0;
-        var selected = View.Grid.GetSelectedCells();
-        var start = View.Grid.CurrentCellIndex ?? (selected.Count > 0 ? selected.MinBy(s => (s.RowIndex, s.ColumnIndex)) : (0, 0));
-        return PasteIntoCells(text, start, selected);
-    }
+    public int PasteIntoCells(string? text) => GridEditing.PasteIntoCells(this, text);
 
     /// <summary>Pastes TSV into cells from <paramref name="start"/>; a single value fills every cell of <paramref name="selected"/>.</summary>
-    public int PasteIntoCells(string? text, (int RowIndex, int ColumnIndex) start, IReadOnlyList<(int RowIndex, int ColumnIndex)> selected)
-    {
-        if (!CanStage || Columns is null) return 0;
-        var lines = TsvParser.Parse(text);
-        if (lines.Count == 0) return 0;
-        var changed = 0;
-        using (Pending!.BeginBatch())
-        {
-            if (lines.Count == 1 && lines[0].Length == 1 && selected.Count > 1)
-            {
-                foreach (var (r, c) in selected)
-                    if (r < Rows.Count && CanEditCell(Rows[r], c) && Pending.SetCell(Rows[r], c, PastedValue(c, lines[0][0]))) changed++;
-                return changed;
-            }
-            for (var i = 0; i < lines.Count; i++)
-            {
-                var r = start.RowIndex + i;
-                if (r < 0 || r >= Rows.Count) break;
-                for (var j = 0; j < lines[i].Length; j++)
-                {
-                    var c = start.ColumnIndex + j;
-                    if (c < 0 || c >= Columns.Count) break;
-                    if (CanEditCell(Rows[r], c) && Pending.SetCell(Rows[r], c, PastedValue(c, lines[i][j]))) changed++;
-                }
-            }
-        }
-        return changed;
-    }
+    public int PasteIntoCells(string? text, (int RowIndex, int ColumnIndex) start, IReadOnlyList<(int RowIndex, int ColumnIndex)> selected) =>
+        GridEditing.PasteIntoCells(this, text, start, selected);
 
     private void ScrollTo(object?[] row)
     {
@@ -759,7 +631,7 @@ public sealed partial class TableTabViewModel : TabViewModelBase, ICommandTarget
     private void OnPendingChanged(object? sender, EventArgs e)
     {
         HasPendingChanges = Pending?.IsDirty == true;
-        SyncInsertedRows();
+        GridEditing.SyncInsertedRows(this, _pageRows);
         OnPropertyChanged(nameof(PendingCount));
         OnPropertyChanged(nameof(CanUndo));
         OnPropertyChanged(nameof(CanRedo));
@@ -767,23 +639,13 @@ public sealed partial class TableTabViewModel : TabViewModelBase, ICommandTarget
         _preview?.Refresh();
     }
 
-    /// <summary>Keeps <see cref="Rows"/> = loaded page rows + staged inserted rows (incrementally, keeping scroll).</summary>
-    private void SyncInsertedRows()
-    {
-        var inserted = Pending?.InsertedRows ?? [];
-        var desired = new HashSet<object?[]>(_pageRows.Concat(inserted), ReferenceEqualityComparer.Instance);
-        for (var i = Rows.Count - 1; i >= 0; i--)
-            if (!desired.Contains(Rows[i])) Rows.RemoveAt(i);
-        var present = new HashSet<object?[]>(Rows, ReferenceEqualityComparer.Instance);
-        foreach (var row in inserted)
-            if (!present.Contains(row)) Rows.Add(row);
-    }
-
     // ---- commit / preview / discard -------------------------------------------------------------------------------
 
     public ChangeTarget? ChangeTarget => Pending is null || Columns is null
         ? null
         : new ChangeTarget(Schema!, Name!, [.. Columns.Select(c => c.Name)], Pending.KeyColumns);
+
+    string IStagedChangesSource.ChangesTitle => $"{Schema}.{Name}";
 
     /// <summary>The statements Commit would send.</summary>
     public IReadOnlyList<SqlCommandSpec> GenerateStatements() =>
@@ -802,44 +664,23 @@ public sealed partial class TableTabViewModel : TabViewModelBase, ICommandTarget
         {
             var statements = GenerateStatements();
             if (statements.Count == 0) return false;
-            if (!await Workspace.SafeMode.ConfirmAsync([.. statements.Select(s => s.LiteralSql)]).ConfigureAwait(true)) return false;
-            IsBusy = true;
-            StatusText = "Committing…";
-            var session = Workspace.Session;
-            var timeout = AppServices.IsInitialized ? AppServices.Current.Connections.CommandTimeoutSeconds : 0;
-            foreach (var s in statements) Workspace.Log(s.LiteralSql);
-            CommitResult result;
-            try
+            var result = await ChangeCommitter.CommitAsync(Workspace, statements, () =>
             {
-                result = await Task.Run(async () =>
-                {
-                    await using var conn = await session.OpenConnectionAsync().ConfigureAwait(false);
-                    return await TableDataAccess.CommitAsync(conn, statements, timeout).ConfigureAwait(false);
-                }).ConfigureAwait(true);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                result = new CommitResult { Success = false, FailedIndex = 0, Error = ex.Message };
-            }
-            AppendHistory(statements, result);
+                IsBusy = true;
+                StatusText = "Committing…";
+            }).ConfigureAwait(true);
+            if (result is null) return false;
             if (!result.Success)
             {
                 LastCommitError = result.Error;
                 LastFailedStatement = result.FailedIndex;
                 StatusText = "Commit failed; changes are still staged.";
-                Workspace.Log($"commit failed (rolled back) at statement {result.FailedIndex + 1}: {result.Error}");
                 _preview?.Refresh();
-                if (showErrors)
-                {
-                    var failing = result.FailedIndex >= 0 && result.FailedIndex < statements.Count ? statements[result.FailedIndex].LiteralSql : null;
-                    Dialogs.Error($"Commit failed at statement {result.FailedIndex + 1} of {statements.Count}. Nothing was committed; your changes are still staged.\n\n{result.Error}",
-                        "Commit failed", detail: failing);
-                }
+                if (showErrors) ChangeCommitter.ShowFailure(statements, result);
                 return false;
             }
             LastCommitError = null;
             LastFailedStatement = -1;
-            Workspace.Log($"committed {statements.Count} statement(s) in {result.Elapsed.TotalMilliseconds:0} ms");
             pending.Clear();
             IsCommitting = false;
             _preview?.Close();
@@ -850,24 +691,6 @@ public sealed partial class TableTabViewModel : TabViewModelBase, ICommandTarget
         {
             IsCommitting = false;
             IsBusy = false;
-        }
-    }
-
-    private void AppendHistory(IReadOnlyList<SqlCommandSpec> statements, CommitResult result)
-    {
-        if (!AppServices.IsInitialized) return;
-        for (var i = 0; i < statements.Count; i++)
-        {
-            if (!result.Success && i > result.FailedIndex) break;
-            Workspace.History.Append(Workspace.Profile.Id, new HistoryEntry
-            {
-                Database = Workspace.Database,
-                Sql = statements[i].LiteralSql,
-                DurationMs = i == 0 ? result.Elapsed.TotalMilliseconds : 0,
-                Rows = i < result.Affected.Count ? result.Affected[i] : null,
-                Error = !result.Success && i == result.FailedIndex,
-                Source = "commit",
-            });
         }
     }
 
@@ -934,6 +757,10 @@ public sealed partial class TableTabViewModel : TabViewModelBase, ICommandTarget
 
     // ---- commands -------------------------------------------------------------------------------------------------
 
+    /// <summary>Grid commands that would stage a change (on a read-only grid they flash the reason instead).</summary>
+    internal static bool IsEditCommand(string commandId) => commandId is CommandIds.GridEditCell or CommandIds.GridInsertRow
+        or CommandIds.GridDuplicateRow or CommandIds.GridDeleteRow or CommandIds.GridSetValueMenu or CommandIds.GridPaste or CommandIds.GridPasteCells;
+
     public bool TryExecuteCommand(string commandId, CommandContext context)
     {
         switch (commandId)
@@ -974,6 +801,11 @@ public sealed partial class TableTabViewModel : TabViewModelBase, ICommandTarget
         }
 
         if (!IsDataView) return false;
+        if (!IsEditable && ReadOnlyReason is not null && IsEditCommand(commandId))
+        {
+            NotifyReadOnlyAttempt();
+            return true;
+        }
         switch (commandId)
         {
             case CommandIds.PageNext:
@@ -1005,25 +837,13 @@ public sealed partial class TableTabViewModel : TabViewModelBase, ICommandTarget
                 return true;
             case CommandIds.GridPaste:
                 if (!IsEditable) return false;
-                PasteAsNewRows(ClipboardText());
+                PasteAsNewRows(GridEditing.ClipboardText());
                 return true;
             case CommandIds.GridPasteCells:
                 if (!IsEditable) return false;
-                PasteIntoCells(ClipboardText());
+                PasteIntoCells(GridEditing.ClipboardText());
                 return true;
         }
         return false;
-    }
-
-    private static string? ClipboardText()
-    {
-        try
-        {
-            return Clipboard.ContainsText() ? Clipboard.GetText() : null;
-        }
-        catch (System.Runtime.InteropServices.COMException)
-        {
-            return null;
-        }
     }
 }

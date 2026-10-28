@@ -38,6 +38,7 @@ public sealed partial class Flows
         Step("sort header click", SortHeader);
         Step("Ctrl+F filter bar + apply", FilterApply);
         Step("edit cell + Ctrl+Shift+P preview + Ctrl+S commit", EditPreviewCommit);
+        Step("editor result inline edit + Ctrl+S commit", EditorResultInlineEdit);
         Step("Ctrl+Alt+2 structure", Structure);
         Step("Ctrl+Alt+C console", ConsoleToggle);
         Step("Ctrl+, settings save changes font live", SettingsFontLive);
@@ -529,6 +530,51 @@ public sealed partial class Flows
             return v == "edited";
         }, 5000);
         Check(ok, "Ctrl+S did not commit (db value '" + v + "')");
+    }
+
+    /// <summary>Spec §10 "Edit results inline": run a SELECT in a SQL tab, edit a result cell, Ctrl+S commits it.</summary>
+    void EditorResultInlineEdit()
+    {
+        var table = _scratch + "_res";
+        using (var c = Open())
+        {
+            Exec(c, $"drop table if exists public.{table}; create table public.{table}(id int primary key, name text); insert into public.{table} values (1,'one'),(2,'two')");
+        }
+        NewSqlTab();
+        SetEditorText($"select * from public.{table} order by id");
+        U.Keys("Ctrl+Enter");
+        Check(WaitIdle(), "run did not finish");
+        Check(WaitTrue(() => Summary().StartsWith("2 rows", StringComparison.Ordinal), 10000), "result summary is '" + Summary() + "'");
+        Check(WaitTrue(() => FirstVisible(Main, Id("ReadOnlyBar")) == null, 5000),
+            "the result stayed read-only: '" + Name(FirstVisible(Main, Id("ReadOnlyText"))) + "'");
+        var row = WaitFor(() => GridRows().FirstOrDefault(r => Visible(r, Type(ControlType.Custom)).Count >= 2 || Visible(r, Type(ControlType.Text)).Count >= 2), 5000)
+                  ?? throw new FlowFailed("result grid has no rows");
+        var cells = Visible(row, Type(ControlType.Custom));
+        if (cells.Count < 2) cells = Visible(row, Type(ControlType.Text));
+        Click(cells[1], dbl: true);
+        Thread.Sleep(300);
+        U.Keys("Ctrl+A");
+        U.Type("inline", 10);
+        U.Keys("Enter");
+        Thread.Sleep(300);
+        U.Keys("Ctrl+S");
+        string? v = null;
+        var ok = WaitTrue(() =>
+        {
+            using var c = Open();
+            v = Scalar(c, $"select name from public.{table} where id = 1") as string;
+            return v == "inline";
+        }, 5000);
+        Check(ok, "Ctrl+S did not commit the result edit (db value '" + v + "')");
+        // Leave the table tab active for the next flows.
+        U.Keys("Ctrl+W");
+        Thread.Sleep(500);
+        U.Keys("Ctrl+P");
+        WaitFor(Palette, 3000);
+        U.Type(_scratch, 10);
+        WaitTrue(() => Palette() is { } p && PaletteRowTitles(p).FirstOrDefault() == _scratch, 10000);
+        U.Keys("Enter");
+        WaitTrue(() => SelectedTabName() == _scratch, 5000);
     }
 
     void Structure()

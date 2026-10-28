@@ -21,6 +21,8 @@ public sealed record CommitResult
     public int FailedIndex { get; init; } = -1;
     public string? Error { get; init; }
     public IReadOnlyList<long> Affected { get; init; } = [];
+    /// <summary>Per statement (aligned with the statements sent): the rows a RETURNING statement returned, else null.</summary>
+    public IReadOnlyList<IReadOnlyList<object?[]>?> Returned { get; init; } = [];
     public TimeSpan Elapsed { get; init; }
 }
 
@@ -86,6 +88,7 @@ public static class TableDataAccess
     {
         var sw = Stopwatch.StartNew();
         var affected = new List<long>();
+        var returned = new List<IReadOnlyList<object?[]>?>();
         await using var tx = await conn.BeginTransactionAsync(ct).ConfigureAwait(false);
         for (var i = 0; i < statements.Count; i++)
         {
@@ -95,7 +98,18 @@ public static class TableDataAccess
             {
                 await using var cmd = spec.CreateCommand(conn, tx);
                 cmd.CommandTimeout = commandTimeoutSeconds;
-                var n = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                long n;
+                if (spec.ReturnsRows)
+                {
+                    var rows = await ReadRowsAsync(cmd, ct).ConfigureAwait(false);
+                    returned.Add(rows);
+                    n = rows.Count;
+                }
+                else
+                {
+                    n = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                    returned.Add(null);
+                }
                 affected.Add(n);
                 if (spec.ExpectedRows is { } expected && n != expected)
                     error = $"Statement {i + 1} affected {n} row(s), expected {expected} (the row was changed or deleted by someone else?).";
@@ -111,10 +125,25 @@ public static class TableDataAccess
             if (error is null) continue;
             try { await tx.RollbackAsync(CancellationToken.None).ConfigureAwait(false); }
             catch (Exception rex) when (rex is NpgsqlException or InvalidOperationException) { /* connection broken: nothing was committed */ }
-            return new CommitResult { Success = false, FailedIndex = i, Error = error, Affected = affected, Elapsed = sw.Elapsed };
+            return new CommitResult { Success = false, FailedIndex = i, Error = error, Affected = affected, Returned = returned, Elapsed = sw.Elapsed };
         }
         await tx.CommitAsync(ct).ConfigureAwait(false);
-        return new CommitResult { Success = true, Affected = affected, Elapsed = sw.Elapsed };
+        return new CommitResult { Success = true, Affected = affected, Returned = returned, Elapsed = sw.Elapsed };
+    }
+
+    /// <summary>Reads every row of a RETURNING statement with the grid's value conversions.</summary>
+    private static async Task<List<object?[]>> ReadRowsAsync(NpgsqlCommand cmd, CancellationToken ct)
+    {
+        var rows = new List<object?[]>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        var inet = Enumerable.Range(0, reader.FieldCount).Select(c => reader.GetDataTypeName(c) == "inet").ToArray();
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
+        {
+            var row = new object?[reader.FieldCount];
+            for (var c = 0; c < row.Length; c++) row[c] = inet[c] ? ReadInet(reader, c) : ReadValue(reader, c);
+            rows.Add(row);
+        }
+        return rows;
     }
 
     /// <summary>inet as PostgreSQL prints it: the provider's default (IPAddress) drops the netmask ("10.0.0.1/8" → "10.0.0.1").</summary>

@@ -35,10 +35,14 @@ public partial class SqlEditorView : UserControl, ISqlEditorView
     private bool _highlightCurrent = true;
     private GridLength _resultsHeight = new(1, GridUnitType.Star);
     private DispatcherTimer? _zoomPersistTimer;
+    private readonly Features.Results.EditableGridController _resultEditing;
+    private ResultTabViewModel? _shownResult;
 
     public SqlEditorView()
     {
         InitializeComponent();
+        _resultEditing = new Features.Results.EditableGridController(Grid, () => _shownResult);
+        Grid.DataGrid.PreviewMouseRightButtonUp += (_, e) => _resultEditing.ShowCellMenu(e);
         var area = Editor.TextArea;
         var view = area.TextView;
 
@@ -111,6 +115,7 @@ public partial class SqlEditorView : UserControl, ISqlEditorView
             _vm.Closed -= OnVmClosed;
         }
         _vm = e.NewValue as SqlEditorTabViewModel;
+        ShowResult(_vm?.SelectedResult);
         if (_vm is null) return;
         _restored = false;
         Editor.Document = _vm.Document;
@@ -199,11 +204,39 @@ public partial class SqlEditorView : UserControl, ISqlEditorView
             case nameof(SqlEditorTabViewModel.IsRunning) or nameof(SqlEditorTabViewModel.RunButtonRunsAll):
                 ApplyRunButton();
                 break;
+            case nameof(SqlEditorTabViewModel.SelectedResult):
+                ShowResult(_vm?.SelectedResult);
+                break;
             case nameof(TabViewModelBase.IsActive) when _vm?.IsActive == true && _restored:
                 Dispatcher.BeginInvoke(FocusEditor, DispatcherPriority.Input);
                 break;
         }
     }
+
+    /// <summary>Connects the shown result tab's editing events to the grid (spec §10 "Edit results inline").</summary>
+    private void ShowResult(ResultTabViewModel? result)
+    {
+        if (ReferenceEquals(result, _shownResult)) return;
+        if (_shownResult is not null)
+        {
+            if (ReferenceEquals(_shownResult.Grid, Grid)) _shownResult.Grid = null;
+            _shownResult.ReadOnlyAttempted -= OnResultReadOnlyAttempted;
+            _shownResult.PendingChanged -= OnResultPendingChanged;
+            _shownResult.SetValueMenuRequested -= OnSetValueMenuRequested;
+        }
+        _shownResult = result;
+        if (result is null) return;
+        result.Grid = Grid;
+        result.ReadOnlyAttempted += OnResultReadOnlyAttempted;
+        result.PendingChanged += OnResultPendingChanged;
+        result.SetValueMenuRequested += OnSetValueMenuRequested;
+    }
+
+    private void OnResultReadOnlyAttempted(object? sender, EventArgs e) => Features.Results.EditableGridController.Flash(ReadOnlyBar);
+
+    private void OnResultPendingChanged(object? sender, EventArgs e) => _resultEditing.RefreshRowVisuals();
+
+    private void OnSetValueMenuRequested(object? sender, EventArgs e) => _resultEditing.ShowSetValueMenu();
 
     private void OnDocumentChanged(object? sender, ICSharpCode.AvalonEdit.Document.DocumentChangeEventArgs e) => _currentStatement.Invalidate();
 

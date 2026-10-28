@@ -18,23 +18,16 @@ namespace TablePlsu.App.Features.TableData;
 /// <summary>The table tab's view: filter bar, editable ResultGrid, bottom tabs, paging. Logic lives in <see cref="TableTabViewModel"/>.</summary>
 public partial class TableTabView : UserControl, ITableDataView
 {
-    private static readonly ConditionalWeakTable<DataGridRow, StrikeThroughAdorner> Strikes = new();
+    private readonly EditableGridController _editing;
     private TableTabViewModel? _vm;
     private Popup? _pagePopup;
 
     public TableTabView()
     {
         InitializeComponent();
+        _editing = new EditableGridController(DataGridView, () => _vm);
         DataContextChanged += (_, _) => Attach(DataContext as TableTabViewModel);
         DataGridView.SortRequested += (_, e) => _vm?.OnSortRequested(e.ColumnName, e.AddToMultiSort);
-        DataGridView.CellEditStarting += (_, e) => e.Cancel = _vm is null || !_vm.CanEditCell(e.Row, e.ColumnIndex);
-        DataGridView.CellEditCommitted += (_, e) =>
-        {
-            if (_vm is null) { e.Cancel = true; return; }
-            e.NewValue = _vm.CommitCellEdit(e.Row, e.ColumnIndex, e.NewText);
-        };
-        DataGridView.DataGrid.PreviewKeyDown += OnGridPreviewKeyDown;
-        DataGridView.DataGrid.LoadingRow += (_, e) => Dispatcher.BeginInvoke(() => UpdateStrike(e.Row), DispatcherPriority.Loaded);
         DataGridView.DataGrid.PreviewMouseRightButtonUp += OnGridRightClick;
     }
 
@@ -42,12 +35,19 @@ public partial class TableTabView : UserControl, ITableDataView
 
     private void Attach(TableTabViewModel? vm)
     {
-        if (_vm is not null && ReferenceEquals(_vm.View, this)) _vm.View = null;
+        if (_vm is not null)
+        {
+            _vm.ReadOnlyAttempted -= OnReadOnlyAttempted;
+            if (ReferenceEquals(_vm.View, this)) _vm.View = null;
+        }
         _vm = vm;
         if (vm is null) return;
         vm.View = this;
+        vm.ReadOnlyAttempted += OnReadOnlyAttempted;
         Dispatcher.BeginInvoke(() => DataGridView.SetSortIndicators(vm.SortIndicators()), DispatcherPriority.Loaded);
     }
+
+    private void OnReadOnlyAttempted(object? sender, EventArgs e) => EditableGridController.Flash(ReadOnlyBanner);
 
     // ---- ITableDataView -------------------------------------------------------------------------------------------
 
@@ -63,11 +63,7 @@ public partial class TableTabView : UserControl, ITableDataView
         }, DispatcherPriority.Loaded);
     }
 
-    public void RefreshRowVisuals()
-    {
-        DataGridView.RefreshVisibleRows();
-        foreach (var row in FindChildren<DataGridRow>(DataGridView.DataGrid)) UpdateStrike(row);
-    }
+    public void RefreshRowVisuals() => _editing.RefreshRowVisuals();
 
     public void ScrollToRow(int rowIndex, int columnIndex = 0)
     {
@@ -78,45 +74,9 @@ public partial class TableTabView : UserControl, ITableDataView
         }, DispatcherPriority.Background);
     }
 
-    public void ShowSetValueMenu()
-    {
-        var menu = BuildSetValueMenu();
-        var target = CurrentCellElement() ?? (UIElement)DataGridView.DataGrid;
-        menu.PlacementTarget = target;
-        menu.Placement = PlacementMode.Bottom;
-        menu.IsOpen = true;
-    }
+    public void ShowSetValueMenu() => _editing.ShowSetValueMenu();
 
     // ---- grid input -----------------------------------------------------------------------------------------------
-
-    private void OnGridPreviewKeyDown(object sender, KeyEventArgs e)
-    {
-        // Enter edits the current cell (spec §6 Inline edit); while editing, the grid commits as usual.
-        if (e.Key == Key.Enter && Keyboard.Modifiers == ModifierKeys.None && _vm is { IsEditable: true } && !DataGridView.DataGrid.IsEditing())
-        {
-            if (DataGridView.BeginEditCurrentCell()) e.Handled = true;
-        }
-    }
-
-    private void UpdateStrike(DataGridRow row)
-    {
-        var deleted = _vm?.Pending is { } p && row.Item is object?[] item && p.IsDeleted(item);
-        Strikes.TryGetValue(row, out var existing);
-        if (deleted == (existing is not null)) return;
-        var layer = AdornerLayer.GetAdornerLayer(row);
-        if (layer is null) return;
-        if (deleted)
-        {
-            var adorner = new StrikeThroughAdorner(row);
-            layer.Add(adorner);
-            Strikes.AddOrUpdate(row, adorner);
-        }
-        else
-        {
-            layer.Remove(existing);
-            Strikes.Remove(row);
-        }
-    }
 
     private void OnGridRightClick(object sender, MouseButtonEventArgs e)
     {
@@ -131,20 +91,7 @@ public partial class TableTabView : UserControl, ITableDataView
             e.Handled = true;
             return;
         }
-        var cell = FindAncestor<DataGridCell>(source);
-        if (cell is null) return;
-        if (!cell.IsSelected)
-        {
-            DataGridView.DataGrid.SelectedCells.Clear();
-            var info = new DataGridCellInfo(cell);
-            DataGridView.DataGrid.CurrentCell = info;
-            DataGridView.DataGrid.SelectedCells.Add(info);
-        }
-        var menu = BuildCellMenu();
-        menu.PlacementTarget = cell;
-        menu.Placement = PlacementMode.MousePoint;
-        menu.IsOpen = true;
-        e.Handled = true;
+        _editing.ShowCellMenu(e);
     }
 
     private void ShowHeaderMenu(FrameworkElement target, string column)
@@ -162,64 +109,11 @@ public partial class TableTabView : UserControl, ITableDataView
         menu.IsOpen = true;
     }
 
-    private ContextMenu BuildCellMenu()
-    {
-        var vm = _vm!;
-        var menu = new ContextMenu();
-        var setValue = new MenuItem { Header = "Set Value", InputGestureText = Gesture(CommandIds.GridSetValueMenu), IsEnabled = vm.IsEditable };
-        foreach (var item in SetValueItems()) setValue.Items.Add(item);
-        menu.Items.Add(setValue);
-        menu.Items.Add(new Separator());
-        menu.Items.Add(Cmd("Copy", CommandIds.GridCopy, () => DataGridView.CopyRows()));
-        menu.Items.Add(Cmd("Copy Selected Cells", CommandIds.GridCopyCells, () => DataGridView.CopySelectedCells()));
-        menu.Items.Add(Cmd("Paste as New Rows", CommandIds.GridPaste, () => vm.TryExecuteCommand(CommandIds.GridPaste, Ctx(CommandIds.GridPaste)), vm.IsEditable));
-        menu.Items.Add(Cmd("Paste into Cells", CommandIds.GridPasteCells, () => vm.TryExecuteCommand(CommandIds.GridPasteCells, Ctx(CommandIds.GridPasteCells)), vm.IsEditable));
-        menu.Items.Add(new Separator());
-        menu.Items.Add(Cmd("Insert Row", CommandIds.GridInsertRow, () => vm.InsertRow(), vm.IsEditable));
-        menu.Items.Add(Cmd("Duplicate Rows", CommandIds.GridDuplicateRow, vm.DuplicateSelectedRows, vm.IsEditable));
-        menu.Items.Add(Cmd("Delete Rows", CommandIds.GridDeleteRow, vm.DeleteSelectedRows, vm.IsEditable));
-        return menu;
-    }
-
-    private CommandContext Ctx(string id) => CommandContext.For(id, DataGridView);
-
-    private ContextMenu BuildSetValueMenu()
-    {
-        var menu = new ContextMenu();
-        foreach (var item in SetValueItems()) menu.Items.Add(item);
-        return menu;
-    }
-
-    private IEnumerable<MenuItem> SetValueItems()
-    {
-        var vm = _vm!;
-        yield return Item("NULL", () => vm.SetSelectedCells(null));
-        yield return Item("DEFAULT", () => vm.SetSelectedCells(SqlDefault.Instance));
-        yield return Item("EMPTY", () => vm.SetSelectedCells(""));
-        if (vm.CurrentColumnIsTemporal()) yield return Item("NOW()", () => vm.SetSelectedCells(SqlExpression.Now));
-    }
-
     private static MenuItem Item(string header, Action action, bool enabled = true)
     {
         var item = new MenuItem { Header = header, IsEnabled = enabled };
         item.Click += (_, _) => action();
         return item;
-    }
-
-    private static MenuItem Cmd(string header, string commandId, Action action, bool enabled = true)
-    {
-        var item = Item(header, action, enabled);
-        item.InputGestureText = Gesture(commandId);
-        return item;
-    }
-
-    private static string Gesture(string commandId) => ShortcutText.Gesture(commandId);
-
-    private FrameworkElement? CurrentCellElement()
-    {
-        var info = DataGridView.DataGrid.CurrentCell;
-        if (info.Column is null || info.Item is null) return null;
-        return info.Column.GetCellContent(info.Item)?.Parent as FrameworkElement ?? info.Column.GetCellContent(info.Item);
     }
 
     // ---- paging popover -------------------------------------------------------------------------------------------

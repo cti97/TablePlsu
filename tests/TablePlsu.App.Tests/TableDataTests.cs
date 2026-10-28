@@ -345,6 +345,9 @@ public class TableTabViewModelTests(ITestOutputHelper output)
             Assert.False(noPk.IsEditable);
             Assert.Contains("primary key", noPk.ReadOnlyReason);
             Assert.Null(noPk.InsertRow());
+            // Trying to edit flashes the banner (it says why) instead of silently doing nothing.
+            Assert.True(noPk.TryExecuteCommand(CommandIds.GridEditCell, new CommandContext { CommandId = CommandIds.GridEditCell }));
+            Assert.Equal(1, noPk.ReadOnlyAttempts);
 
             var view = await OpenAsync(ws, "public", "active_customers", ObjectKinds.View);
             Assert.False(view.IsEditable);
