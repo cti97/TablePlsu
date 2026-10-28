@@ -646,9 +646,9 @@ public sealed partial class SidebarViewModel : ObservableObject, ICommandTarget,
             IReadOnlyList<string>? names;
             try
             {
-                var list = ListDatabases;
-                var ws = Workspace;
-                names = await Task.Run(() => list(ws, ct), ct).ConfigureAwait(true);
+                // Called on the UI thread: DatabaseList.For touches ws.Services (a plain dictionary) and DatabaseList's
+                // own in-flight task field, both shared with the palette. RefreshAsync does the query on the pool.
+                names = await ListDatabases(Workspace, ct).ConfigureAwait(true);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -663,8 +663,9 @@ public sealed partial class SidebarViewModel : ObservableObject, ICommandTarget,
         catch (OperationCanceledException)
         {
         }
-        catch (Exception ex) when (ex is ObjectDisposedException or InvalidOperationException or Npgsql.NpgsqlException)
+        catch (Exception ex)
         {
+            // Nothing awaits EmptyHintTask in the app, so log every failure rather than letting it vanish unobserved.
             if (!_disposed) Workspace.Log("Checking whether the database is empty failed: " + ex.GetBaseException().Message);
         }
     }
