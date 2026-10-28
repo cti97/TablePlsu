@@ -33,8 +33,8 @@ public class ResultEditabilityTests(ITestOutputHelper output)
             var result = await Session.ExecuteAsync(sql, new ExecuteOptions { RowLimit = 50 });
             var st = Assert.Single(result.Statements);
             Assert.Null(st.Error);
-            var info = await ResultEditability.AnalyzeAsync(st.CommandTag, st.Columns, (oid, ct) => ResultEditability.FindTableByOidAsync(Cache, Session, oid, ct));
-            if (info.IsEditable) info = info.WithRows(st.Rows);
+            // The app's whole pipeline, including re-reading the rows by key.
+            var info = await ResultEditability.AnalyzeResultAsync(st.CommandTag, st.Columns, st.Rows, Cache, Session);
             return (st, info);
         }
 
@@ -176,5 +176,102 @@ public class ResultEditabilityTests(ITestOutputHelper output)
 
         Assert.Null(ResultEditability.DuplicateKeyReason([[1, "a"], [2, "b"]], [0]));
         Assert.NotNull(ResultEditability.DuplicateKeyReason([[1, "a"], [1, "b"]], [0]));
+    }
+    /// <summary>The row re-read (wrong-row review) sends every accepted key type back as text: none may break matching.</summary>
+    [Fact]
+    public async Task Row_verification_matches_every_exact_key_type()
+    {
+        if (!TestPg.Available(output)) return;
+        var table = "re_keys_" + Guid.NewGuid().ToString("N")[..8];
+        await using var admin = new NpgsqlConnection(TestPg.ConnectionString);
+        await admin.OpenAsync();
+        await using (var c = new NpgsqlCommand($$"""
+            CREATE TABLE public.{{table}}(a smallint, b bigint, c uuid, d date, e boolean, f char(3), g varchar(5), h name, i text, v int[],
+                PRIMARY KEY (a, b, c, d, e, f, g, h, i));
+            INSERT INTO public.{{table}} VALUES
+                (1, 9000000000, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '2024-02-29', true, 'x', 'it''s', 'nm', 'tab	x', '{1,2}'),
+                (-2, -1, '00000000-0000-0000-0000-000000000000', '0001-01-01', false, 'abc', '', 'n2', 'ü€', NULL)
+            """, admin)) await c.ExecuteNonQueryAsync();
+        await using var f = await Fixture.OpenAsync();
+        try
+        {
+            var (st, info) = await f.AnalyzeAsync($"select * from public.{table}");
+            Assert.Equal(2, st.Rows.Count);
+            Assert.True(info.IsEditable, info.Reason);
+        }
+        finally
+        {
+            await using var d = new NpgsqlCommand($"DROP TABLE IF EXISTS public.{table}", admin);
+            await d.ExecuteNonQueryAsync();
+        }
+    }
+
+    /// <summary>A row changed (or deleted) by someone else between the query and the check: what the grid shows is not
+    /// what a commit keyed by that row would change, so the result is read-only until re-run.</summary>
+    [Fact]
+    public async Task Rows_changed_since_the_query_make_the_result_read_only()
+    {
+        if (!TestPg.Available(output)) return;
+        var table = "re_chg_" + Guid.NewGuid().ToString("N")[..8];
+        await using var admin = new NpgsqlConnection(TestPg.ConnectionString);
+        await admin.OpenAsync();
+        async Task Exec(string sql)
+        {
+            await using var c = new NpgsqlCommand(sql, admin);
+            await c.ExecuteNonQueryAsync();
+        }
+        await Exec($"CREATE TABLE public.{table}(id int PRIMARY KEY, name text); INSERT INTO public.{table} VALUES (1, 'a'), (2, 'b')");
+        await using var f = await Fixture.OpenAsync();
+        try
+        {
+            var result = await f.Session.ExecuteAsync($"select * from public.{table} order by id", new ExecuteOptions { RowLimit = 50 });
+            var st = Assert.Single(result.Statements);
+            var info = await ResultEditability.AnalyzeAsync(st.CommandTag, st.Columns, (oid, ct) => ResultEditability.FindTableByOidAsync(f.Cache, f.Session, oid, ct));
+            Assert.True(info.IsEditable, info.Reason);
+            Assert.True((await ResultEditability.VerifyRowsAsync(info, st.Rows, f.Session)).IsEditable);
+
+            await Exec($"UPDATE public.{table} SET name = 'changed' WHERE id = 2");
+            var changed = await ResultEditability.VerifyRowsAsync(info, st.Rows, f.Session);
+            Assert.False(changed.IsEditable);
+            Assert.Contains("don't match", changed.Reason);
+
+            await Exec($"UPDATE public.{table} SET name = 'b' WHERE id = 2; DELETE FROM public.{table} WHERE id = 1");
+            Assert.False((await ResultEditability.VerifyRowsAsync(info, st.Rows, f.Session)).IsEditable);
+        }
+        finally
+        {
+            await Exec($"DROP TABLE IF EXISTS public.{table}");
+        }
+    }
+
+    /// <summary>A renamed non-key column (wrong-row review, finding 2): the stale snapshot is re-loaded, so the change
+    /// target uses the new name.</summary>
+    [Fact]
+    public async Task Renamed_column_reloads_the_stale_metadata()
+    {
+        if (!TestPg.Available(output)) return;
+        var table = "re_ren_" + Guid.NewGuid().ToString("N")[..8];
+        await using var admin = new NpgsqlConnection(TestPg.ConnectionString);
+        await admin.OpenAsync();
+        async Task Exec(string sql)
+        {
+            await using var c = new NpgsqlCommand(sql, admin);
+            await c.ExecuteNonQueryAsync();
+        }
+        await Exec($"CREATE TABLE public.{table}(id int PRIMARY KEY, name text); INSERT INTO public.{table} VALUES (1, 'a')");
+        await using var f = await Fixture.OpenAsync();
+        try
+        {
+            var (_, info) = await f.AnalyzeAsync($"select * from public.{table}");
+            Assert.Equal(["id", "name"], info.Target!.Columns);
+            await Exec($"ALTER TABLE public.{table} RENAME name TO title");
+            (_, info) = await f.AnalyzeAsync($"select * from public.{table}");
+            Assert.True(info.IsEditable, info.Reason);
+            Assert.Equal(["id", "title"], info.Target!.Columns);
+        }
+        finally
+        {
+            await Exec($"DROP TABLE IF EXISTS public.{table}");
+        }
     }
 }

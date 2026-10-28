@@ -217,6 +217,23 @@ public partial class ResultGrid : UserControl
     /// <summary>Starts editing the current cell (F2). False when read-only or nothing is current.</summary>
     public bool BeginEditCurrentCell() => !IsReadOnly && InnerGrid.BeginEdit();
 
+    /// <summary>
+    /// Commits an open cell edit as Enter would (the typed value is staged through <see cref="CellEditCommitted"/>).
+    /// Called before anything that must see the typed value (Ctrl+S) or that rebinds the grid (another result).
+    /// False when no cell was being edited.
+    /// </summary>
+    public bool CommitOpenEdit()
+    {
+        if (!InnerGrid.IsEditing()) return false;
+        InnerGrid.CommitEdit(DataGridEditingUnit.Cell, true);
+        InnerGrid.CommitEdit(DataGridEditingUnit.Row, true);
+        return true;
+    }
+
+    /// <summary><see cref="CommitOpenEdit"/> on the grid that contains <paramref name="focused"/> (if any).</summary>
+    public static bool CommitOpenEditAt(DependencyObject? focused) =>
+        EditableGridController.FindAncestor<ResultGrid>(focused) is { } grid && grid.CommitOpenEdit();
+
     /// <summary>Selected rows (each once), in on-screen order.</summary>
     public IReadOnlyList<object?[]> GetSelectedRows() => CollectSelection().Rows;
 

@@ -33,8 +33,10 @@ public sealed class WorkspaceFeature : IFeature
         c.Register(CommandIds.ConsoleToggle, x => Ws(x)!.IsConsoleVisible = !Ws(x)!.IsConsoleVisible, Has);
 
         // Ctrl+S commits staged changes; with nothing staged it saves the active tab (autosave flush / linked file).
+        // A value still being typed into a grid cell is staged first, so "type, Ctrl+S" commits it.
         c.Register(CommandIds.ChangesCommit, x =>
         {
+            Results.ResultGrid.CommitOpenEditAt(x.FocusedElement as DependencyObject);
             var tab = Ws(x)!.ActiveTab!;
             if (tab.HasPendingChanges) tab.CommitAsync().Forget(ex => Dialogs.Error(ex.Message, "Commit failed"));
             else tab.Save();

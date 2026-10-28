@@ -292,10 +292,10 @@ public sealed partial class ResultTabViewModel : ObservableObject, IEditableGrid
         var cts = new CancellationTokenSource();
         _analysisCts = cts;
         ResultEditInfo info;
+        var rows = Rows.ToList();
         try
         {
-            info = await ResultEditability.AnalyzeAsync(result.CommandTag, columns,
-                (oid, ct) => ResultEditability.FindTableByOidAsync(ws.Metadata, ws.Session, oid, ct), cts.Token).ConfigureAwait(true);
+            info = await ResultEditability.AnalyzeResultAsync(result.CommandTag, columns, rows, ws.Metadata, ws.Session, cts.Token).ConfigureAwait(true);
         }
         catch (OperationCanceledException)
         {
@@ -306,8 +306,7 @@ public sealed partial class ResultTabViewModel : ObservableObject, IEditableGrid
             info = ResultEditInfo.ReadOnly("couldn't check the source table (" + ex.Message + ")");
         }
         if (cts.IsCancellationRequested) return;
-        _loadedRows = [.. Rows];
-        if (info.IsEditable) info = info.WithRows(_loadedRows);
+        _loadedRows = rows;
         ApplyEditInfo(info);
     }
 

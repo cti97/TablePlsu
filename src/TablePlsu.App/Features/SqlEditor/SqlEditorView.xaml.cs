@@ -305,6 +305,8 @@ public partial class SqlEditorView : UserControl, ISqlEditorView
 
     // ---- ISqlEditorView -----------------------------------------------------------------------------------------
 
+    public void CommitResultCellEdit() => Grid.CommitOpenEdit();
+
     public void FocusEditor()
     {
         if (!IsVisible) return;

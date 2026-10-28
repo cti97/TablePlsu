@@ -31,8 +31,8 @@ public class ResultEditabilityWrongRowTests(ITestOutputHelper output)
         var result = await session.ExecuteAsync(sql, new ExecuteOptions { RowLimit = 50 });
         var st = Assert.Single(result.Statements);
         Assert.Null(st.Error);
-        var info = await ResultEditability.AnalyzeAsync(st.CommandTag, st.Columns, (oid, ct) => ResultEditability.FindTableByOidAsync(cache, session, oid, ct));
-        if (info.IsEditable) info = info.WithRows(st.Rows);
+        // The app's pipeline (ResultTabViewModel.AnalyzeEditabilityAsync): provenance → table → duplicate keys → row re-read.
+        var info = await ResultEditability.AnalyzeResultAsync(st.CommandTag, st.Columns, st.Rows, cache, session);
         return (st, info);
     }
 

@@ -156,14 +156,160 @@ public static class ResultEditability
     }
 
     /// <summary>
-    /// The table/view with <paramref name="oid"/>: from the metadata snapshot, else the relation's schema is looked up
-    /// (one catalog query on the metadata connection) and loaded (re-loaded when it was loaded without this relation,
-    /// i.e. stale). System catalogs are returned as a bare <see cref="TableInfo"/> without loading pg_catalog.
-    /// Null when the relation no longer exists.
+    /// The whole pipeline for a finished editor result: <see cref="AnalyzeAsync"/> with the table found through
+    /// <see cref="FindTableByOidAsync"/>, then <see cref="ResultEditInfo.WithRows"/> and <see cref="VerifyRowsAsync"/>.
+    /// </summary>
+    public static async Task<ResultEditInfo> AnalyzeResultAsync(string? commandTag, IReadOnlyList<ResultColumn> columns,
+        IReadOnlyList<object?[]> rows, MetadataCache cache, DbSession session, CancellationToken ct = default)
+    {
+        var info = await AnalyzeAsync(commandTag, columns, (oid, c) => FindTableByOidAsync(cache, session, oid, c), ct).ConfigureAwait(false);
+        if (info.IsEditable) info = info.WithRows(rows);
+        if (info.IsEditable) info = await VerifyRowsAsync(info, rows, session, ct).ConfigureAwait(false);
+        return info;
+    }
+
+    /// <summary>Rows re-read per verification query (one text[] parameter per key column, so the size only bounds memory).</summary>
+    private const int VerifyChunk = 5000;
+
+    /// <summary>
+    /// Re-reads the loaded rows from the source table by primary key (on a fresh connection, i.e. what a commit will see)
+    /// and compares every shown column. RowDescription provenance can't tell two range-table entries of the same table
+    /// apart, so a self-join / LATERAL / CTE that shows another row's column under this row's key passes
+    /// <see cref="Analyze"/>; an UPDATE keyed by the shown key would then write the wrong row. Any row whose values differ
+    /// (that case, or a row changed or uncommitted since the query ran) or that is gone makes the result read-only.
+    /// </summary>
+    public static async Task<ResultEditInfo> VerifyRowsAsync(ResultEditInfo info, IReadOnlyList<object?[]> rows, DbSession session, CancellationToken ct = default)
+    {
+        if (info.Target is not { } target || rows.Count == 0) return info;
+        try
+        {
+            await using var conn = await session.OpenConnectionAsync(ct).ConfigureAwait(false);
+            for (var start = 0; start < rows.Count; start += VerifyChunk)
+            {
+                var chunk = rows.Skip(start).Take(VerifyChunk).ToList();
+                if (!await ChunkMatchesAsync(conn, target, info.Table!, chunk, ct).ConfigureAwait(false))
+                    return ResultEditInfo.ReadOnly("shown values don't match the table's rows (a self-join, or rows changed since the query ran)");
+            }
+            return info;
+        }
+        catch (Exception ex) when (ex is NpgsqlException or InvalidOperationException or TimeoutException)
+        {
+            return ResultEditInfo.ReadOnly("couldn't re-read the rows to check them (" + ex.Message + ")");
+        }
+    }
+
+    private static async Task<bool> ChunkMatchesAsync(NpgsqlConnection conn, ChangeTarget target, TableInfo table, List<object?[]> rows, CancellationToken ct)
+    {
+        var keys = target.KeyColumns;
+        var keyTypes = keys.Select(k => KeyCastType(table.Columns.First(c => c.Name == target.Columns[k]).DataType)).ToList();
+        var sql = new System.Text.StringBuilder("SELECT ")
+            .Append(string.Join(", ", target.Columns.Select(TablePlsu.Core.Sql.SqlIdent.Quote)))
+            .Append(" FROM ").Append(TablePlsu.Core.Sql.SqlIdent.Quote(target.Schema)).Append('.').Append(TablePlsu.Core.Sql.SqlIdent.Quote(target.Table))
+            .Append(" WHERE (").Append(string.Join(", ", keys.Select(k => TablePlsu.Core.Sql.SqlIdent.Quote(target.Columns[k])))).Append(") IN (SELECT ")
+            .Append(string.Join(", ", keys.Select((_, i) => $"u.k{i}::{keyTypes[i]}")))
+            .Append(" FROM unnest(").Append(string.Join(", ", keys.Select((_, i) => $"${i + 1}::text[]")))
+            .Append(") AS u(").Append(string.Join(", ", keys.Select((_, i) => $"k{i}"))).Append("))");
+        await using var cmd = new NpgsqlCommand(sql.ToString(), conn);
+        for (var i = 0; i < keys.Count; i++)
+        {
+            var k = keys[i];
+            cmd.Parameters.Add(new NpgsqlParameter
+            {
+                Value = rows.Select(r => KeyText(r[k])).ToArray(),
+                NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text,
+            });
+        }
+        var current = new Dictionary<RowKey, object?[]>();
+        await using (var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false))
+        {
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+            {
+                var row = new object?[target.Columns.Count];
+                for (var c = 0; c < row.Length; c++) row[c] = ReadValue(reader, c);
+                current[new RowKey(keys.Select(k => row[k]))] = row;
+            }
+        }
+        foreach (var row in rows)
+        {
+            if (!current.TryGetValue(new RowKey(keys.Select(k => row[k])), out var now)) return false;
+            for (var c = 0; c < now.Length; c++)
+                if (!CellEquals(row[c], now[c])) return false;
+        }
+        return true;
+    }
+
+    /// <summary>The type a key's text is cast back to: its own (always one of <see cref="ExactKeyTypes"/>, so safe to
+    /// inline), without a length (char(n) as bpchar).</summary>
+    private static string KeyCastType(string dataType) => BaseTypeName(dataType) switch
+    {
+        "character" or "bpchar" => "bpchar",
+        "character varying" or "varchar" => "text",
+        var t when ExactKeyTypes.Contains(t) => t,
+        _ => "text",
+    };
+
+    private static string? KeyText(object? value) => value switch
+    {
+        null => null,
+        bool b => b ? "true" : "false",
+        DateOnly d => d.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture),
+        DateTime d => d.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture),
+        IFormattable f => f.ToString(null, System.Globalization.CultureInfo.InvariantCulture),
+        _ => value.ToString(),
+    };
+
+    /// <summary>Same as the editor's row reader (DbSession): display values, unreadable values as a marker string.</summary>
+    private static object? ReadValue(NpgsqlDataReader reader, int ordinal)
+    {
+        if (reader.IsDBNull(ordinal)) return null;
+        try
+        {
+            return DbValueConverter.ToDisplayValue(reader.GetValue(ordinal));
+        }
+        catch (Exception ex) when (ex is InvalidCastException or NotSupportedException or OverflowException or ArgumentException)
+        {
+            return $"<unreadable {reader.GetDataTypeName(ordinal)}: {ex.Message}>";
+        }
+    }
+
+    /// <summary>Value equality, structural for collections (bit strings, hstore…).</summary>
+    internal static bool CellEquals(object? a, object? b)
+    {
+        if (Equals(a, b)) return true;
+        if (a is null || b is null || a is string || b is string) return false;
+        if (a is System.Collections.IEnumerable ea && b is System.Collections.IEnumerable eb)
+        {
+            var ia = ea.GetEnumerator();
+            var ib = eb.GetEnumerator();
+            while (true)
+            {
+                var ma = ia.MoveNext();
+                if (ma != ib.MoveNext()) return false;
+                if (!ma) return true;
+                if (!CellEquals(ia.Current, ib.Current)) return false;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// The table/view with <paramref name="oid"/>: from the metadata snapshot (checked against the catalog's current
+    /// column names and primary key, and re-loaded when they differ: a rename would otherwise make the generated UPDATE
+    /// address other columns), else the relation's schema is looked up (one catalog query on the metadata connection) and
+    /// loaded (re-loaded when it was loaded without this relation, i.e. stale). System catalogs are returned as a bare
+    /// <see cref="TableInfo"/> without loading pg_catalog. Null when the relation no longer exists or its metadata can't be
+    /// brought up to date.
     /// </summary>
     public static async Task<TableInfo?> FindTableByOidAsync(MetadataCache cache, DbSession session, uint oid, CancellationToken ct = default)
     {
-        if (Find(cache.Current, oid) is { } known) return known;
+        if (Find(cache.Current, oid) is { } known)
+        {
+            var shape = await CurrentShapeAsync(session, oid, ct).ConfigureAwait(false);
+            if (shape is null) return null;
+            if (Matches(known, shape.Value)) return known;
+            await cache.EnsureSchemaLoadedAsync(known.Schema, force: true, ct).ConfigureAwait(false);
+            return Find(cache.Current, oid) is { } reloaded && Matches(reloaded, shape.Value) ? reloaded : null;
+        }
         var rel = await session.WithMetadataConnectionAsync(async (conn, c) =>
         {
             await using var cmd = new NpgsqlCommand(
@@ -179,6 +325,35 @@ public static class ResultEditability
         await cache.EnsureSchemaLoadedAsync(r.Item1, force: loaded, ct).ConfigureAwait(false);
         return Find(cache.Current, oid);
     }
+
+    /// <summary>The relation's current columns (attnum → name) and primary-key column names in key order; null when gone.</summary>
+    private static Task<(Dictionary<int, string> Columns, List<string> Key)?> CurrentShapeAsync(DbSession session, uint oid, CancellationToken ct) =>
+        session.WithMetadataConnectionAsync(async (conn, c) =>
+        {
+            await using var cmd = new NpgsqlCommand(
+                """
+                SELECT a.attnum, a.attname,
+                       (SELECT array_position(i.indkey::int2[], a.attnum) FROM pg_index i WHERE i.indrelid = a.attrelid AND i.indisprimary)
+                FROM pg_attribute a
+                WHERE a.attrelid = $1::oid AND a.attnum > 0 AND NOT a.attisdropped
+                """, conn);
+            cmd.Parameters.Add(new NpgsqlParameter { Value = (long)oid, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Bigint });
+            var columns = new Dictionary<int, string>();
+            var key = new List<(int Pos, string Name)>();
+            await using var reader = await cmd.ExecuteReaderAsync(c).ConfigureAwait(false);
+            while (await reader.ReadAsync(c).ConfigureAwait(false))
+            {
+                var name = reader.GetString(1);
+                columns[reader.GetInt16(0)] = name;
+                if (!reader.IsDBNull(2)) key.Add((reader.GetInt32(2), name));
+            }
+            return columns.Count == 0 ? ((Dictionary<int, string>, List<string>)?)null : (columns, key.OrderBy(k => k.Pos).Select(k => k.Name).ToList());
+        }, ct);
+
+    private static bool Matches(TableInfo table, (Dictionary<int, string> Columns, List<string> Key) shape) =>
+        table.Columns.Count == shape.Columns.Count
+        && table.Columns.All(c => shape.Columns.TryGetValue(c.Ordinal, out var name) && name == c.Name)
+        && table.PrimaryKey.SequenceEqual(shape.Key);
 
     private static bool IsSystemSchema(string schema) => SystemSchemas.Contains(schema) || schema.StartsWith("pg_toast", StringComparison.Ordinal);
 

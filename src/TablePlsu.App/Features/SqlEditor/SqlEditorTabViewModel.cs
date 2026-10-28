@@ -32,6 +32,9 @@ public interface ISqlEditorView
     void ToggleLineComment();
     void ToggleBlockComment();
     void ZoomFont(int delta);
+
+    /// <summary>Commits an open cell edit in the result grid (stages the typed value into the shown result).</summary>
+    void CommitResultCellEdit() { }
 }
 
 /// <summary>
@@ -128,6 +131,9 @@ public sealed partial class SqlEditorTabViewModel : TabViewModelBase, ICommandTa
     [ObservableProperty]
     public partial ResultTabViewModel? SelectedResult { get; set; }
 
+    // The grid is about to show another result: a value still being typed belongs to the outgoing one.
+    partial void OnSelectedResultChanging(ResultTabViewModel? value) => View?.CommitResultCellEdit();
+
     // ---- inline result edits (spec §10 "Edit results inline") ---------------------------------------------------
 
     /// <summary>Asks before staged result edits are thrown away (re-run, close). Replaceable in tests.</summary>
@@ -136,8 +142,9 @@ public sealed partial class SqlEditorTabViewModel : TabViewModelBase, ICommandTa
     /// <summary>Staged result edits across every result tab.</summary>
     public int PendingResultChanges => Results.Sum(r => r.PendingCount);
 
-    /// <summary>The result whose staged edits Ctrl+S / Preview / Discard / Undo act on: the selected result when it has
-    /// some, else the first result that has.</summary>
+    /// <summary>The result whose staged edits Ctrl+S / Preview / Discard act on: the selected result when it has some,
+    /// else the first result that has (the result bar counts every result's edits and marks the tabs that have some).
+    /// Undo / Redo act on the selected result only (<see cref="TryExecuteCommand"/>).</summary>
     public ResultTabViewModel? PendingResult =>
         SelectedResult is { HasPendingChanges: true } selected ? selected : Results.FirstOrDefault(r => r.HasPendingChanges) ?? SelectedResult;
 
@@ -185,10 +192,11 @@ public sealed partial class SqlEditorTabViewModel : TabViewModelBase, ICommandTa
     {
         switch (commandId)
         {
+            // Only the result the user is looking at: undoing an edit in a hidden result tab would be invisible.
             case CommandIds.EditUndo when !context.IsTextInputFocused:
-                return PendingResult?.Undo() == true;
+                return SelectedResult?.Undo() == true;
             case CommandIds.EditRedo when !context.IsTextInputFocused:
-                return PendingResult?.Redo() == true;
+                return SelectedResult?.Redo() == true;
         }
         return false;
     }

@@ -134,6 +134,8 @@
                                     <TextBlock Text="●" Foreground="{DynamicResource c.app.error}" FontSize="9" Margin="0,0,5,0" VerticalAlignment="Center"
                                                Visibility="{Binding HasError, Converter={x:Static infra:BoolToVisibilityConverter.Instance}}" />
                                     <TextBlock Text="{Binding Title}" />
+                                    <TextBlock Text=" *" Foreground="{DynamicResource c.app.warning}" ToolTip="Has staged edits"
+                                               Visibility="{Binding HasPendingChanges, Converter={x:Static infra:BoolToVisibilityConverter.Instance}}" />
                                 </StackPanel>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
@@ -148,8 +150,9 @@
                                Visibility="{Binding SelectedResult.Truncated, Converter={x:Static infra:BoolToVisibilityConverter.Instance}, FallbackValue=Collapsed}"
                                ToolTip="Fetching stopped at the row limit; more rows exist. Change the limit beside Run." />
                     <TextBlock DockPanel.Dock="Right" Foreground="{DynamicResource c.app.warning}" Margin="8,0,0,0"
-                               Visibility="{Binding SelectedResult.HasPendingChanges, Converter={x:Static infra:BoolToVisibilityConverter.Instance}, FallbackValue=Collapsed}">
-                        <Run Text="{Binding SelectedResult.PendingCount, Mode=OneWay}" /><Run Text=" pending" />
+                               AutomationProperties.AutomationId="ResultPending" ToolTip="Staged result edits (all result tabs; tabs with edits are marked)"
+                               Visibility="{Binding HasPendingChanges, Converter={x:Static infra:BoolToVisibilityConverter.Instance}, FallbackValue=Collapsed}">
+                        <Run Text="{Binding PendingResultChanges, Mode=OneWay}" /><Run Text=" pending" />
                     </TextBlock>
                     <TextBlock x:Name="ResultSummary" AutomationProperties.AutomationId="ResultSummary" Text="{Binding SelectedResult.Summary}"
                                Foreground="{DynamicResource c.app.statusBarForeground}" />
