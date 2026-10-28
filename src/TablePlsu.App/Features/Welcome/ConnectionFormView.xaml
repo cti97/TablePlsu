@@ -150,7 +150,33 @@
                          Visibility="{Binding IsPasswordCommand, Converter={x:Static infra:BoolToVisibilityConverter.Instance}}" />
 
                 <TextBlock Grid.Row="8" Text="Database" Style="{StaticResource FieldLabel}" />
-                <TextBox Grid.Row="8" Grid.Column="1" x:Name="DatabaseBox" Text="{Binding Database, UpdateSourceTrigger=PropertyChanged}" />
+                <StackPanel Grid.Row="8" Grid.Column="1">
+                    <!-- Free text as before (empty = server default); the dropdown lists the server's databases. -->
+                    <ComboBox x:Name="DatabaseBox" IsEditable="True" IsTextSearchEnabled="False"
+                              ItemsSource="{Binding DatabaseItems}"
+                              Text="{Binding Database, UpdateSourceTrigger=PropertyChanged}"
+                              ToolTip="Empty uses the server default. Open the list to see the server's databases.">
+                        <ComboBox.ItemContainerStyle>
+                            <Style TargetType="ComboBoxItem" BasedOn="{StaticResource {x:Type ComboBoxItem}}">
+                                <Setter Property="IsEnabled" Value="{Binding IsDatabase}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsDatabase}" Value="False">
+                                        <Setter Property="Foreground" Value="{DynamicResource c.app.mutedForeground}" />
+                                        <Setter Property="FontStyle" Value="Italic" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </ComboBox.ItemContainerStyle>
+                    </ComboBox>
+                    <TextBlock x:Name="DatabaseHint" Margin="2,0,0,4" TextWrapping="Wrap"
+                               Visibility="{Binding DatabaseHint, Converter={x:Static infra:NullToVisibilityConverter.Instance}}">
+                        <Hyperlink x:Name="DatabaseHintLink" Command="{Binding UseSuggestedDatabaseCommand}"
+                                   Foreground="{DynamicResource c.app.accent}" TextDecorations="None"
+                                   ToolTip="Use this database">
+                            <Run Text="{Binding DatabaseHint, Mode=OneWay}" />
+                        </Hyperlink>
+                    </TextBlock>
+                </StackPanel>
 
                 <TextBlock Grid.Row="9" Grid.ColumnSpan="2" Text="SSL" Style="{StaticResource SectionHeader}" />
 

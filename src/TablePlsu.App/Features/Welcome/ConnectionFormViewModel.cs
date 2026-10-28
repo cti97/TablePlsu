@@ -1,3 +1,6 @@
+using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -11,6 +14,16 @@ namespace TablePlsu.App.Features.Welcome;
 public sealed record Choice<T>(T Value, string Label)
 {
     public override string ToString() => Label;
+}
+
+public enum DatabaseItemKind { Database, Loading, Message }
+
+/// <summary>A row of the Database dropdown: a database name, or a disabled "Loading…" / message row.</summary>
+public sealed record DatabaseItem(string Text, DatabaseItemKind Kind)
+{
+    public bool IsDatabase => Kind == DatabaseItemKind.Database;
+
+    public override string ToString() => Text;
 }
 
 /// <summary>
@@ -193,7 +206,17 @@ public sealed partial class ConnectionFormViewModel : ObservableObject
     /// <summary>Validates the fields and builds the profile. Returns null and sets <see cref="StatusMessage"/> when invalid.</summary>
     public ConnectionProfile? BuildProfile()
     {
-        string? error = null;
+        if (TryBuildProfile(out var profile, out var error)) return profile;
+        StatusOk = false;
+        StatusMessage = error;
+        return null;
+    }
+
+    /// <summary>Validates the fields and builds the profile without touching the status line.</summary>
+    private bool TryBuildProfile([NotNullWhen(true)] out ConnectionProfile? profile, out string? error)
+    {
+        profile = null;
+        error = null;
         if (string.IsNullOrWhiteSpace(Host)) error = "Host is required.";
         else if (!TryPort(Port, out var port)) error = "Port must be a number between 1 and 65535.";
         else if (!string.IsNullOrWhiteSpace(Color) && !ThemeColor.TryParse(Color.Trim(), out _)) error = "Status colour must look like #RRGGBB.";
@@ -201,15 +224,10 @@ public sealed partial class ConnectionFormViewModel : ObservableObject
         else if (SshEnabled && !TryPort(SshPort, out _)) error = "SSH port must be a number between 1 and 65535.";
         else if (!string.IsNullOrWhiteSpace(SshKeyFile) && SshKeyFile.EndsWith(".pub", StringComparison.OrdinalIgnoreCase))
             error = "Pick the private key, not the .pub file.";
-        if (error is not null)
-        {
-            StatusOk = false;
-            StatusMessage = error;
-            return null;
-        }
+        if (error is not null) return false;
         TryPort(Port, out var dbPort);
         TryPort(SshPort, out var sshPort);
-        return new ConnectionProfile
+        profile = new ConnectionProfile
         {
             Id = _id,
             Name = Name.Trim(),
@@ -236,6 +254,7 @@ public sealed partial class ConnectionFormViewModel : ObservableObject
             Bootstrap = string.IsNullOrWhiteSpace(Bootstrap) ? null : Bootstrap,
             RowLimit = _rowLimit,
         };
+        return true;
     }
 
     /// <summary>Secrets from the form fields; "Ask" modes prompt now (null when cancelled).</summary>
@@ -290,14 +309,25 @@ public sealed partial class ConnectionFormViewModel : ObservableObject
 
         _testCts?.Cancel();
         _testCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var token = _testCts.Token;
+        var generation = _serverGeneration;
         IsTesting = true;
         StatusOk = null;
         StatusMessage = "Testing…";
         try
         {
-            var version = await Task.Run(() => ConnectionTester.TestAsync(profile, secrets, _testCts.Token));
+            var probe = await Task.Run(() => ConnectionTester.ProbeAsync(profile, secrets, token));
             StatusOk = true;
-            StatusMessage = $"Connected. PostgreSQL {version}";
+            StatusMessage = $"Connected. PostgreSQL {probe.Version}";
+            // The same session listed the databases: fill the dropdown and maybe hint (unless the server fields changed meanwhile).
+            if (generation == _serverGeneration && probe.Databases is { } databases)
+            {
+                _dbListCts?.Cancel();
+                _dbListCts = null;
+                ShowDatabases(databases);
+                _testedDatabases = databases;
+                UpdateSuggestion();
+            }
         }
         catch (OperationCanceledException)
         {
@@ -307,7 +337,10 @@ public sealed partial class ConnectionFormViewModel : ObservableObject
         catch (Exception ex)
         {
             StatusOk = false;
-            StatusMessage = ex.InnerException is { } inner && ex.Message.Length < 20 ? inner.Message : ex.Message;
+            StatusMessage = ErrorText(ex);
+            // Wrong database name: the server is fine, so list what is there to pick from.
+            if (generation == _serverGeneration && ConnectionTester.IsMissingDatabase(ex))
+                DatabaseListTask = FetchDatabasesAsync(profile, secrets);
         }
         finally
         {
@@ -416,6 +449,180 @@ public sealed partial class ConnectionFormViewModel : ObservableObject
         }
         return profile;
     }
+
+    // ---- database dropdown and hint ------------------------------------------------------------------------------
+
+    /// <summary>Fields that identify the server and login: editing one makes the database list stale.</summary>
+    private static readonly HashSet<string> ServerFields =
+    [
+        nameof(Host), nameof(Port), nameof(User), nameof(Password), nameof(PasswordMode), nameof(PasswordCommand),
+        nameof(SslMode), nameof(SslClientKeyFile), nameof(SslClientCertFile), nameof(SslRootCertFile),
+        nameof(SshEnabled), nameof(SshHost), nameof(SshPort), nameof(SshUser), nameof(SshPasswordMode), nameof(SshPassword),
+        nameof(SshUseKey), nameof(SshKeyFile), nameof(SshPassphrase), nameof(Bootstrap),
+    ];
+
+    private CancellationTokenSource? _dbListCts;
+    private bool _dbListLoaded;
+    private int _serverGeneration;
+    private IReadOnlyList<string>? _testedDatabases;
+
+    /// <summary>
+    /// The Database dropdown: database names from the server, or one disabled row ("Loading…", an error, a hint).
+    /// Empty until a Test succeeds or the dropdown is opened.
+    /// </summary>
+    public ObservableCollection<DatabaseItem> DatabaseItems { get; } = [];
+
+    /// <summary>The latest database list fetch (completed when none ran). Tests await it.</summary>
+    public Task DatabaseListTask { get; private set; } = Task.CompletedTask;
+
+    /// <summary>Lists the server's databases for the dropdown. Replaceable for tests.</summary>
+    internal Func<ConnectionProfile, ConnectionSecrets, CancellationToken, Task<IReadOnlyList<string>>> DatabaseLister { get; set; } =
+        ConnectionTester.ListDatabasesAsync;
+
+    /// <summary>How long the dropdown waits for the list.</summary>
+    internal TimeSpan DatabaseListTimeout { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>The database the hint under the field suggests (see <see cref="DatabaseSuggestion"/>), or null.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DatabaseHint))]
+    public partial string? SuggestedDatabase { get; private set; }
+
+    public string? DatabaseHint => SuggestedDatabase is null ? null : $"Your data may be in “{SuggestedDatabase}” — use it";
+
+    [RelayCommand]
+    private void UseSuggestedDatabase()
+    {
+        if (SuggestedDatabase is { } name) Database = name;
+    }
+
+    /// <summary>
+    /// The dropdown is opening: fetch the list once per server (host/port/user/password/SSH/SSL), if the form has what a
+    /// connection needs without prompting. Never shows a dialog; problems become a disabled row.
+    /// </summary>
+    public Task OpenDatabaseList()
+    {
+        if (_dbListLoaded || _dbListCts is not null) return DatabaseListTask;
+        if (!TryBuildForListing(out var profile, out var secrets))
+        {
+            SetDatabaseItems([new DatabaseItem("Fill in host, user and password (or Test) to list databases", DatabaseItemKind.Message)]);
+            return Task.CompletedTask;
+        }
+        return DatabaseListTask = FetchDatabasesAsync(profile, secrets);
+    }
+
+    private async Task FetchDatabasesAsync(ConnectionProfile profile, ConnectionSecrets secrets)
+    {
+        _dbListCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _dbListCts = cts;
+        SetDatabaseItems([new DatabaseItem("Loading…", DatabaseItemKind.Loading)]);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
+        timeout.CancelAfter(DatabaseListTimeout);
+        var lister = DatabaseLister;
+        try
+        {
+            var names = await Task.Run(() => lister(profile, secrets, timeout.Token), timeout.Token).WaitAsync(timeout.Token);
+            if (cts.IsCancellationRequested) return;
+            ShowDatabases(names);
+        }
+        catch (Exception ex)
+        {
+            // Cancelled because the server fields changed: the list was already cleared.
+            if (cts.IsCancellationRequested) return;
+            SetDatabaseItems([new DatabaseItem(
+                ex is OperationCanceledException ? "Timed out listing databases." : "Could not list databases: " + ErrorText(ex),
+                DatabaseItemKind.Message)]);
+        }
+        finally
+        {
+            if (_dbListCts == cts) _dbListCts = null;
+        }
+    }
+
+    private void ShowDatabases(IReadOnlyList<string> names)
+    {
+        _dbListLoaded = true;
+        SetDatabaseItems(names.Count == 0
+            ? [new DatabaseItem("No databases found", DatabaseItemKind.Message)]
+            : names.Select(n => new DatabaseItem(n, DatabaseItemKind.Database)).ToList());
+    }
+
+    /// <summary>
+    /// Raised just before <see cref="DatabaseItems"/> changes. The editable ComboBox clears its text when its selected
+    /// item leaves the list, so the view drops the selection (keeping the text) first.
+    /// </summary>
+    public event Action? DatabaseItemsChanging;
+
+    private void SetDatabaseItems(IReadOnlyList<DatabaseItem> items)
+    {
+        if (DatabaseItems.SequenceEqual(items)) return;
+        DatabaseItemsChanging?.Invoke();
+        DatabaseItems.Clear();
+        foreach (var item in items) DatabaseItems.Add(item);
+    }
+
+    /// <summary>A server field changed: cancel any fetch and forget the list and the hint.</summary>
+    private void InvalidateDatabaseList()
+    {
+        _serverGeneration++;
+        _dbListCts?.Cancel();
+        _dbListCts = null;
+        _dbListLoaded = false;
+        _testedDatabases = null;
+        SetDatabaseItems([]);
+        UpdateSuggestion();
+    }
+
+    private void UpdateSuggestion() => SuggestedDatabase = DatabaseSuggestion.Suggest(Database, _testedDatabases);
+
+    protected override void OnPropertyChanged(PropertyChangedEventArgs e)
+    {
+        base.OnPropertyChanged(e);
+        if (e.PropertyName is null) return;
+        if (e.PropertyName == nameof(Database)) UpdateSuggestion();
+        else if (ServerFields.Contains(e.PropertyName)) InvalidateDatabaseList();
+    }
+
+    /// <summary>Profile and secrets for a background list fetch: valid fields and no password prompt or command needed.</summary>
+    private bool TryBuildForListing([NotNullWhen(true)] out ConnectionProfile? profile, [NotNullWhen(true)] out ConnectionSecrets? secrets)
+    {
+        secrets = null;
+        if (string.IsNullOrWhiteSpace(Host) || string.IsNullOrWhiteSpace(User) || !TryBuildProfile(out profile, out _))
+        {
+            profile = null;
+            return false;
+        }
+        string? password = null;
+        switch (profile.PasswordMode)
+        {
+            case PasswordMode.Store when !string.IsNullOrEmpty(Password):
+                password = Password;
+                break;
+            case PasswordMode.None:
+                break;
+            default:
+                return false;
+        }
+        string? sshPassword = null;
+        if (profile.SshEnabled && !profile.SshUseKey)
+        {
+            switch (profile.SshPasswordMode)
+            {
+                case PasswordMode.Store when !string.IsNullOrEmpty(SshPassword):
+                    sshPassword = SshPassword;
+                    break;
+                case PasswordMode.None:
+                    break;
+                default:
+                    return false;
+            }
+        }
+        secrets = new ConnectionSecrets(password, sshPassword, profile.SshEnabled && profile.SshUseKey ? NullIfEmpty(SshPassphrase) : null);
+        return true;
+    }
+
+    private static string ErrorText(Exception ex) =>
+        ex.InnerException is { } inner && ex.Message.Length < 20 ? inner.Message : ex.Message;
 
     private static bool TryPort(string text, out int port) =>
         int.TryParse(text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out port) && port is >= 1 and <= 65535;
